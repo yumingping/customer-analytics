@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>客户分析平台</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%231c1917'/><path d='M13 10V3L4 14h7v7l9-11h-7z' fill='%23fafaf9'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.bootcdn.net/ajax/libs/alpinejs/3.14.8/cdn.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script>
+tailwind.config={
+  theme:{
+    extend:{
+      fontFamily:{
+        display:['Sora','sans-serif'],
+        body:['Manrope','sans-serif'],
+        mono:['JetBrains Mono','monospace'],
+      },
+      colors:{
+        brand:{
+          50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',
+          400:'#818cf8',500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81'
+        }
+      },
+      boxShadow:{
+        'card':'0 1px 2px rgba(28,25,23,0.04)',
+        'card-hover':'0 4px 16px -4px rgba(28,25,23,0.08)',
+        'soft':'0 1px 3px rgba(28,25,23,0.05)',
+      },
+      animation:{
+        'fade-up':'fadeUp 0.5s cubic-bezier(0.4,0,0.2,1) both',
+        'fade-in':'fadeIn 0.3s ease both',
+        'slide-right':'slideRight 0.3s cubic-bezier(0.4,0,0.2,1) both',
+        'scale-in':'scaleIn 0.2s cubic-bezier(0.34,1.56,0.64,1) both',
+      }
+    }
+  }
+}
+</script>
+<style>
+/* ===== Base ===== */
+[x-cloak]{display:none!important}
+*{font-family:'Manrope',sans-serif}
+h1,h2,h3,h4,h5{font-family:'Sora',sans-serif}
+body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+
+/* ===== Scrollbar ===== */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#d6d3d1;border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:#a8a29e}
+
+/* ===== Sidebar — clean deep warm black ===== */
+.sidebar-bg{
+  background:#0c0a09;
+  position:relative;
+}
+
+/* ===== Header — minimal ===== */
+.glass-header{
+  background:rgba(255,255,255,0.92);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+}
+
+/* ===== Animations ===== */
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideRight{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:translateX(0)}}
+@keyframes scaleIn{from{opacity:0;transform:scale(0.96)}to{opacity:1;transform:scale(1)}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes typingDot{0%,60%,100%{transform:translateY(0);opacity:0.3}30%{transform:translateY(-4px);opacity:1}}
+@keyframes toastIn{from{opacity:0;transform:translateX(32px) scale(0.95)}to{opacity:1;transform:translateX(0) scale(1)}}
+
+/* ===== Typing Dots ===== */
+.typing-dots{display:inline-flex;gap:4px;align-items:center}
+.typing-dots span{width:6px;height:6px;border-radius:50%;background:#78716c;animation:typingDot 1.4s infinite}
+.typing-dots span:nth-child(2){animation-delay:0.2s}
+.typing-dots span:nth-child(3){animation-delay:0.4s}
+
+/* ===== Skeleton ===== */
+.skeleton{background:linear-gradient(90deg,#f5f5f4 25%,#e7e5e4 50%,#f5f5f4 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:6px}
+
+/* ===== Toast ===== */
+.toast-enter{animation:toastIn 0.3s cubic-bezier(0.34,1.56,0.64,1) both}
+
+/* ===== Focus Ring ===== */
+.focus-ring:focus-visible{outline:none;box-shadow:0 0 0 2px rgba(79,70,229,0.35)}
+
+/* ===== Input focus ===== */
+.input-glow:focus-within{border-color:#a8a29e;box-shadow:0 0 0 3px rgba(28,25,23,0.05)}
+
+/* ===== Copy Button ===== */
+.copy-btn{opacity:0;transition:opacity 0.2s}
+.code-wrapper:hover .copy-btn{opacity:1}
+
+/* ===== KPI Card ===== */
+.kpi-card{transition:all 0.3s cubic-bezier(0.4,0,0.2,1)}
+.kpi-card:hover{border-color:#d6d3d1;box-shadow:0 4px 16px -4px rgba(28,25,23,0.08)}
+
+/* ===== Chat Message Entrance ===== */
+.msg-enter{animation:fadeUp 0.3s cubic-bezier(0.4,0,0.2,1) both}
+
+/* ===== Conversation Item ===== */
+.conv-item{transition:all 0.15s ease}
+
+/* ===== Menu Item ===== */
+.menu-item{position:relative;overflow:hidden}
+.menu-item::after{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:2px;height:0;background:#a8a29e;transition:height 0.25s ease}
+.menu-item.active::after{height:50%}
+
+/* ===== Markdown ===== */
+.md-content{line-height:1.75;word-break:break-word;color:#44403c}
+.md-content h1,.md-content h2,.md-content h3{font-family:'Sora',sans-serif;font-weight:700;margin:0.8em 0 0.4em;color:#1c1917}
+.md-content h1{font-size:1.2em}.md-content h2{font-size:1.1em}.md-content h3{font-size:1.02em}
+.md-content p{margin:0.5em 0}
+.md-content ul,.md-content ol{padding-left:1.5em;margin:0.5em 0}
+.md-content li{margin:0.2em 0}
+.md-content code{background:#f5f5f4;padding:0.12em 0.4em;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:0.86em;color:#4f46e5}
+.md-content pre{background:#1c1917;color:#e7e5e4;padding:0.9em 1.1em;border-radius:8px;overflow-x:auto;margin:0.6em 0;font-family:'JetBrains Mono',monospace;font-size:0.82em;line-height:1.5}
+.md-content pre code{background:transparent;color:inherit;padding:0}
+.md-content strong{font-weight:700;color:#1c1917}
+.md-content em{color:#57534e}
+.md-content blockquote{border-left:2px solid #d6d3d1;padding-left:0.9em;color:#78716c;margin:0.6em 0}
+.md-content table{border-collapse:collapse;margin:0.6em 0;width:100%;font-size:0.9em}
+.md-content th,.md-content td{border:1px solid #e7e5e4;padding:0.35em 0.7em;text-align:left}
+.md-content th{background:#fafaf9;font-weight:600;color:#57534e}
+
+/* ===== Table ===== */
+.data-table{font-family:'Manrope',sans-serif}
+.data-table thead th{font-family:'Sora',sans-serif;font-weight:600;letter-spacing:0.04em}
+.data-table tbody tr{transition:background 0.15s ease}
+.data-table tbody tr:hover{background:#fafaf9}
+
+/* ===== Settings Form ===== */
+.form-input{transition:all 0.2s ease}
+.form-input:focus{outline:none;border-color:#1c1917;box-shadow:0 0 0 3px rgba(28,25,23,0.06)}
+
+/* ===== Quick Query Button ===== */
+.quick-btn{transition:all 0.2s ease}
+.quick-btn:hover{border-color:#1c1917;color:#1c1917;background:#fafaf9}
+
+/* ===== Send Button ===== */
+.send-btn{transition:all 0.2s cubic-bezier(0.34,1.56,0.64,1)}
+.send-btn:not(:disabled):hover{transform:scale(1.06)}
+.send-btn:not(:disabled):active{transform:scale(0.95)}
+
+/* ===== Chart Container ===== */
+.chart-card{transition:border-color 0.3s ease}
+.chart-card:hover{border-color:#d6d3d1}
+
+/* ===== Step Item ===== */
+.step-item{transition:background 0.15s ease}
+.step-item:hover{background:#fafaf9}
+</style>
+</head>
+<body class="bg-stone-50 text-stone-800 h-screen overflow-hidden flex font-body" x-data="app()" x-init="initData()">
+
+<!-- ====== Toast Notification ====== -->
+<div x-show="toast.show" x-cloak x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0" x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0 translate-x-8"
+  class="fixed top-6 right-6 z-[100] flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-lg border text-sm font-medium bg-white border-stone-200"
+  :class="toast.type==='success' ? 'text-emerald-700' : toast.type==='error' ? 'text-red-700' : 'text-stone-700'">
+  <div class="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+    :class="toast.type==='success' ? 'bg-emerald-100' : toast.type==='error' ? 'bg-red-100' : 'bg-stone-100'">
+    <svg x-show="toast.type==='success'" class="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+    <svg x-show="toast.type==='error'" class="w-3.5 h-3.5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    <svg x-show="toast.type==='info'" class="w-3.5 h-3.5 text-stone-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+  </div>
+  <span x-text="toast.message"></span>
+</div>
+
+<!-- ====== Sidebar ====== -->
+<aside :class="sidebarCollapsed ? 'w-[68px]' : 'w-60'"
+       class="sidebar-bg flex flex-col transition-all duration-300 z-20 shrink-0">
+  <div class="px-5 py-5 flex items-center gap-3 border-b border-white/5" :class="sidebarCollapsed ? 'justify-center' : ''">
+    <div class="w-9 h-9 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+      <svg class="w-4 h-4 text-stone-100" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+    </div>
+    <div x-show="!sidebarCollapsed" class="overflow-hidden">
+      <h1 class="text-sm font-bold text-stone-100 tracking-tight font-display leading-none">客户分析平台</h1>
+      <p class="text-[10px] text-stone-500 font-mono mt-1.5 tracking-wide">MCP Architecture</p>
+    </div>
+  </div>
+
+  <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+    <template x-for="menu in menus" :key="menu.id">
+      <button @click="currentView=menu.id"
+        :class="currentView===menu.id ? 'active bg-white/[0.06] text-stone-100' : 'text-stone-500 hover:bg-white/[0.03] hover:text-stone-300'"
+        :title="sidebarCollapsed ? menu.name : ''"
+        class="menu-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-colors duration-150">
+        <div x-html="menu.icon" class="w-[18px] h-[18px] shrink-0"></div>
+        <span x-show="!sidebarCollapsed" x-text="menu.name" class="transition-opacity duration-200"></span>
+      </button>
+    </template>
+  </nav>
+
+  <!-- Collapse toggle -->
+  <div class="px-3 py-3 border-t border-white/5">
+    <button @click="sidebarCollapsed=!sidebarCollapsed;saveSidebarState()"
+      class="w-full flex items-center gap-2 text-stone-600 hover:text-stone-400 text-xs py-1.5 transition-colors rounded-md hover:bg-white/[0.03]"
+      :class="sidebarCollapsed ? 'justify-center' : 'px-2'">
+      <svg class="w-3.5 h-3.5 shrink-0 transition-transform duration-300" :class="sidebarCollapsed ? 'rotate-180' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+      <span x-show="!sidebarCollapsed">折叠</span>
+    </button>
+  </div>
+
+  <div class="px-3 py-3 border-t border-white/5 text-xs text-stone-600 flex items-center gap-2" :class="sidebarCollapsed ? 'justify-center' : 'px-3'">
+    <span class="w-1.5 h-1.5 rounded-full shrink-0 transition-colors" :class="sysStatus?'bg-emerald-500':'bg-red-500'"></span>
+    <span x-show="!sidebarCollapsed" x-text="sysStatus?dbType.toUpperCase()+' 在线':'离线'" class="text-stone-500"></span>
+    <span x-show="!sidebarCollapsed && sysStatus" x-text="toolCount+' Tools'" class="text-stone-600 font-mono text-[10px]"></span>
+  </div>
+</aside>
+
+<!-- ====== Main ====== -->
+<main class="flex-1 flex flex-col min-w-0 bg-stone-50">
+
+  <header class="glass-header h-16 border-b border-stone-200/80 flex items-center justify-between px-8 z-10 shrink-0">
+    <div>
+      <h2 class="text-base font-bold text-stone-900 font-display tracking-tight leading-none" x-text="currentMenu?.name || ''"></h2>
+      <p class="text-xs text-stone-500 mt-1.5" x-text="currentMenu?.desc || ''"></p>
+    </div>
+    <div class="flex items-center gap-3">
+      <button x-show="!dataAvailable" @click="runPipeline()" :disabled="pipelineRunning"
+        class="flex items-center gap-2 bg-stone-900 hover:bg-stone-800 text-stone-50 px-5 py-2.5 rounded-lg text-sm font-medium transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed focus-ring">
+        <svg x-show="pipelineRunning" class="animate-spin h-4 w-4 text-stone-50" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+        <svg x-show="!pipelineRunning" class="w-3.5 h-3.5 text-stone-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span x-text="pipelineRunning?'执行中...':'运行数据分析'"></span>
+      </button>
+    </div>
+  </header>
+
+  <div class="flex-1 overflow-y-auto relative">
+
+    <!-- No-data overlay -->
+    <div x-show="!dataAvailable && currentView!=='settings'" class="absolute inset-0 z-10 flex flex-col items-center justify-center bg-stone-50/90 backdrop-blur-sm" x-cloak>
+      <div class="w-16 h-16 bg-stone-100 border border-stone-200 rounded-2xl flex items-center justify-center mb-5 text-stone-500">
+        <svg class="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+      </div>
+      <h3 class="text-lg font-bold text-stone-900 font-display">暂无分析数据</h3>
+      <p class="text-sm text-stone-500 mt-2 text-center max-w-xs">点击右上角 <span class="font-semibold text-stone-900">运行数据分析</span> 启动数据分析流水线</p>
+    </div>
+
+    <!-- === View: 数据大盘 === -->
+    <div x-show="currentView==='overview'" x-transition.opacity class="p-8" x-cloak>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+        <template x-for="(kpi,idx) in kpiCards" :key="idx">
+          <div class="kpi-card bg-white rounded-xl p-6 border border-stone-200/80"
+               :style="'animation-delay:'+(idx*60)+'ms'" x-init="$el.classList.add('animate-fade-up')">
+            <div class="flex justify-between items-start mb-5">
+              <span class="text-xs font-medium text-stone-500 font-display tracking-wide uppercase" x-text="kpi.label"></span>
+              <div class="p-2 rounded-lg" :class="kpi.bg"><div x-html="kpi.icon" :class="kpi.color" class="w-[18px] h-[18px]"></div></div>
+            </div>
+            <div class="text-3xl font-bold text-stone-900 font-display tracking-tight leading-none" x-text="kpi.value"></div>
+            <div class="mt-3 text-xs text-stone-400" x-text="kpi.sub"></div>
+          </div>
+        </template>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div class="chart-card bg-white rounded-xl p-6 border border-stone-200/80">
+          <div class="flex items-center justify-between mb-5">
+            <h3 class="text-sm font-bold text-stone-900 font-display">客户价值分层</h3>
+            <div class="flex items-center gap-1.5 text-[11px] text-stone-400 font-mono">
+              <span class="w-1 h-1 rounded-full bg-stone-400"></span> RFM Model
+            </div>
+          </div>
+          <div id="chart-ov-value" class="h-72 w-full"></div>
+        </div>
+        <div class="chart-card bg-white rounded-xl p-6 border border-stone-200/80">
+          <div class="flex items-center justify-between mb-5">
+            <h3 class="text-sm font-bold text-stone-900 font-display">聚类占比</h3>
+            <div class="flex items-center gap-1.5 text-[11px] text-stone-400 font-mono">
+              <span class="w-1 h-1 rounded-full bg-stone-400"></span> K-Means
+            </div>
+          </div>
+          <div id="chart-ov-cluster" class="h-72 w-full"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- === View: 智能分析 Agent === -->
+    <div x-show="currentView==='query'" class="absolute inset-0 flex bg-white" x-transition.opacity x-cloak>
+      <!-- Conversation sidebar -->
+      <div class="w-56 border-r border-stone-200 flex flex-col shrink-0 bg-stone-50/60" x-show="!sidebarCollapsed || chatHistoryOpen">
+        <div class="p-3 border-b border-stone-200">
+          <button @click="newConversation()" class="w-full py-2.5 text-xs font-medium text-stone-900 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg transition-colors duration-150 flex items-center justify-center gap-1.5 group">
+            <svg class="w-3.5 h-3.5 transition-transform duration-200 group-hover:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            新建对话
+          </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2 space-y-0.5">
+          <template x-for="(conv,i) in conversations" :key="conv.id">
+            <div class="conv-item group flex items-center rounded-lg"
+                 :class="conv.id===activeConvId?'bg-white border border-stone-200 shadow-soft':''">
+              <button @click="switchConversation(conv.id)" class="flex-1 text-left p-2.5 text-xs">
+                <div class="text-stone-800 font-medium truncate" x-text="conv.title||'新对话'"></div>
+                <div class="text-[10px] text-stone-400 mt-0.5 font-mono" x-text="conv.time"></div>
+              </button>
+              <button @click="deleteConversation(conv.id)" class="shrink-0 px-2 py-1 text-stone-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all rounded-md hover:bg-red-50">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
+            </div>
+          </template>
+          <div x-show="conversations.length===0" class="text-xs text-stone-400 text-center py-8">点击上方按钮新建对话</div>
+        </div>
+      </div>
+
+      <!-- Main chat area -->
+      <div class="flex-1 flex flex-col min-w-0">
+        <div class="flex-1 overflow-y-auto p-6 space-y-6" id="chatContainer">
+          <!-- Welcome -->
+          <div class="flex flex-col items-center justify-center text-center mt-12 mb-6 max-w-2xl mx-auto" x-show="messages.length===0">
+            <div class="w-14 h-14 bg-stone-100 border border-stone-200 rounded-2xl flex items-center justify-center mb-6">
+              <svg class="w-6 h-6 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/></svg>
+            </div>
+            <h2 class="text-xl font-bold text-stone-900 mb-2 font-display tracking-tight">客户数据查询</h2>
+            <p class="text-sm text-stone-500 mb-8 max-w-md leading-relaxed">输入自然语言查询客户数据，支持 SQL 查询、可视化、趋势预测、异常检测。</p>
+            <div class="flex flex-wrap justify-center gap-2">
+              <button @click="sendFastQuery('统计各价值层级的客户数量，用柱状图展示')" class="quick-btn px-4 py-2.5 rounded-lg border border-stone-200 text-xs font-medium text-stone-600 bg-white">
+                <span class="flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                  价值层级分布
+                </span>
+              </button>
+              <button @click="sendFastQuery('各聚类簇的平均消费金额，画饼图')" class="quick-btn px-4 py-2.5 rounded-lg border border-stone-200 text-xs font-medium text-stone-600 bg-white">
+                <span class="flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"/></svg>
+                  聚类消费分析
+                </span>
+              </button>
+              <button @click="sendFastQuery('评估客户流失风险')" class="quick-btn px-4 py-2.5 rounded-lg border border-stone-200 text-xs font-medium text-stone-600 bg-white">
+                <span class="flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                  流失风险评估
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Messages -->
+          <template x-for="(msg,idx) in messages" :key="idx">
+            <div class="flex gap-3 w-full max-w-6xl mx-auto msg-enter" :class="msg.role==='user'?'flex-row-reverse':''">
+              <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+                :class="msg.role==='user'?'bg-stone-900':'bg-stone-100 border border-stone-200'">
+                <svg x-show="msg.role==='user'" class="w-3.5 h-3.5 text-stone-100" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                <svg x-show="msg.role==='agent'" class="w-3.5 h-3.5 text-stone-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/></svg>
+              </div>
+              <div class="min-w-0" :class="msg.role==='user'?'max-w-[75%]':'flex-1'">
+                <div x-show="msg.role==='user'" class="bg-stone-900 text-stone-50 px-4 py-3 rounded-xl rounded-tr-sm text-sm leading-relaxed"><span x-text="msg.content"></span></div>
+                <div x-show="msg.role==='agent'" class="bg-white border border-stone-200 px-5 py-4 rounded-xl rounded-tl-sm text-sm leading-relaxed text-stone-700 w-full">
+                  <!-- Loading -->
+                  <div x-show="msg.loading" class="flex items-center gap-3 h-6 text-stone-400">
+                    <div class="typing-dots"><span></span><span></span><span></span></div>
+                    <span class="text-xs font-medium">正在分析数据...</span>
+                  </div>
+                  <!-- Steps -->
+                  <div x-show="msg.steps && msg.steps.length > 0" class="mb-3">
+                    <details class="text-xs group">
+                      <summary class="cursor-pointer text-stone-400 hover:text-stone-900 select-none flex items-center gap-1.5 transition-colors">
+                        <svg class="w-3 h-3 transition-transform duration-200 group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
+                        执行步骤 (<span x-text="msg.steps?.length || 0"></span>)
+                      </summary>
+                      <div class="mt-2.5 space-y-2 pl-2">
+                        <template x-for="(step,si) in msg.steps">
+                          <div class="step-item flex items-start gap-2.5 bg-stone-50 p-2.5 rounded-md border border-stone-200/60">
+                            <div class="mt-0.5 shrink-0">
+                              <div x-show="step.success" class="w-4 h-4 rounded-full bg-emerald-50 flex items-center justify-center">
+                                <svg class="w-2.5 h-2.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                              </div>
+                              <div x-show="!step.success" class="w-4 h-4 rounded-full bg-red-50 flex items-center justify-center">
+                                <svg class="w-2.5 h-2.5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"/></svg>
+                              </div>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                              <div class="font-mono text-[11px] font-semibold text-stone-700" x-text="step.tool"></div>
+                              <div x-show="step.args&&step.args.sql_query" class="code-wrapper mt-1.5 relative">
+                                <div class="p-2.5 pr-10 bg-stone-900 text-stone-300 rounded-md font-mono text-[11px] overflow-x-auto whitespace-pre" x-text="step.args.sql_query"></div>
+                                <button @click="copyText(step.args.sql_query, $event)" class="copy-btn absolute top-1.5 right-1.5 px-1.5 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-stone-100 transition-colors">
+                                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                                </button>
+                              </div>
+                              <div x-show="!step.success" class="mt-1 text-red-500 font-mono text-[11px]" x-text="step.error"></div>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </details>
+                  </div>
+                  <!-- Content -->
+                  <div x-show="msg.content" class="mb-3 md-content" x-html="marked.parse(msg.content||'')"></div>
+                  <!-- Table -->
+                  <div x-show="msg.tableData" class="mt-3 border border-stone-200 rounded-lg overflow-hidden bg-white">
+                    <div class="overflow-auto max-h-96">
+                      <table class="data-table w-full text-left border-collapse text-xs">
+                        <thead class="bg-stone-50 sticky top-0 z-10">
+                          <tr>
+                            <template x-for="col in msg.tableCols">
+                              <th class="px-4 py-2.5 text-stone-500 uppercase whitespace-nowrap border-b border-stone-200" x-text="col"></th>
+                            </template>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-y divide-stone-100">
+                          <template x-for="(row,ri) in msg.tableData" :key="ri">
+                            <tr>
+                              <template x-for="col in msg.tableCols">
+                                <td class="px-4 py-2 text-stone-700 whitespace-nowrap" x-text="row[col]??'-'"></td>
+                              </template>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div class="px-4 py-2.5 bg-stone-50 text-[11px] text-stone-500 border-t border-stone-200 flex items-center justify-between flex-wrap gap-2">
+                      <span>共 <span class="font-bold text-stone-800" x-text="msg.tableTotal"></span> 条<span x-show="msg.totalPages>1"> / <span x-text="msg.totalPages"></span> 页</span><span x-show="msg.pageLoading" class="ml-2 text-stone-600 flex items-center gap-1"><svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>加载中...</span></span>
+                      <div x-show="msg.totalPages>1" class="flex items-center gap-1">
+                        <button @click="loadPage(idx,1)" :disabled="msg.page<=1||msg.pageLoading" class="px-2.5 py-1 rounded-md border border-stone-200 bg-white hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed text-stone-600 transition-colors">首页</button>
+                        <button @click="loadPage(idx,msg.page-1)" :disabled="msg.page<=1||msg.pageLoading" class="px-2.5 py-1 rounded-md border border-stone-200 bg-white hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed text-stone-600 transition-colors">
+                          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/></svg>
+                        </button>
+                        <span class="px-2 text-stone-600 font-mono">第 <span x-text="msg.page"></span>/<span x-text="msg.totalPages"></span> 页</span>
+                        <button @click="loadPage(idx,msg.page+1)" :disabled="msg.page>=msg.totalPages||msg.pageLoading" class="px-2.5 py-1 rounded-md border border-stone-200 bg-white hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed text-stone-600 transition-colors">
+                          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
+                        </button>
+                        <button @click="loadPage(idx,msg.totalPages)" :disabled="msg.page>=msg.totalPages||msg.pageLoading" class="px-2.5 py-1 rounded-md border border-stone-200 bg-white hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed text-stone-600 transition-colors">末页</button>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- Chart -->
+                  <div x-show="msg.hasChart" :id="'chat-chart-'+idx" class="mt-3 w-full h-[520px] bg-white rounded-lg border border-stone-200 p-3"></div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Input bar -->
+        <div class="p-4 shrink-0 border-t border-stone-200 bg-white">
+          <div class="max-w-6xl mx-auto flex items-center bg-white border border-stone-300 rounded-xl p-1.5 pl-4 input-glow transition-all duration-200">
+            <input type="text" x-model="userInput" @keydown.enter="submitQuery()"
+              placeholder="输入查询，如：统计各价值层级客户数量"
+              class="flex-1 bg-transparent border-none text-sm text-stone-800 px-2 focus:outline-none placeholder:text-stone-400"
+              :disabled="chatLoading">
+            <button @click="submitQuery()" :disabled="chatLoading||!userInput.trim()"
+              class="send-btn w-9 h-9 flex items-center justify-center bg-stone-900 hover:bg-stone-800 text-stone-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+            </button>
+          </div>
+          <div class="max-w-6xl mx-auto mt-2 flex items-center justify-between text-[10px] text-stone-400">
+            <span class="flex items-center gap-1">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.007 2.907-.542.104-.993.55-.993 1.103v.49m5.5 3.5h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              按 Enter 发送
+            </span>
+            <span x-show="chatLoading" class="text-stone-600 flex items-center gap-1">
+              <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              处理中...
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- === View: 系统设置 === -->
+    <div x-show="currentView==='settings'" x-transition.opacity class="p-8 max-w-3xl overflow-hidden" x-cloak>
+      <div class="space-y-5">
+        <!-- LLM Provider -->
+        <div class="bg-white rounded-xl p-6 border border-stone-200/80">
+          <div class="flex items-center gap-2.5 mb-5">
+            <div class="w-8 h-8 rounded-lg bg-stone-100 flex items-center justify-center">
+              <svg class="w-4 h-4 text-stone-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+            </div>
+            <h3 class="text-sm font-bold text-stone-900 font-display">LLM 提供商配置</h3>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="text-xs text-stone-500 font-medium block mb-1.5">提供商</label>
+              <select x-model="cfgForm.llm_provider" class="form-input w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm bg-white">
+                <option value="ollama">Ollama (本地)</option>
+                <option value="openai_compatible">OpenAI 兼容 API</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-stone-500 font-medium block mb-1.5">默认聚类数 K</label>
+              <input type="number" x-model="cfgForm.n_clusters" min="2" max="8" class="form-input w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm bg-white">
+            </div>
+          </div>
+
+          <div x-show="cfgForm.llm_provider==='ollama'" class="grid grid-cols-2 gap-4 mt-4" x-transition>
+            <div>
+              <label class="text-xs text-stone-500 font-medium block mb-1.5">Ollama 地址</label>
+              <input type="text" x-model="cfgForm.ollama_url" class="form-input w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm font-mono bg-white">
+            </div>
+            <div>
+              <label class="text-xs text-stone-500 font-medium block mb-1.5">模型名称</label>
+              <input type="text" x-model="cfgForm.ollama_model" class="form-input w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm font-mono bg-white">
+            </div>
+          </div>
+
+          <div x-show="cfgForm.llm_provider==='openai_compatible'" class="space-y-4 mt-4" x-transition>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="text-xs text-stone-500 font-medium block mb-1.5">API 地址</label>
+                <input type="text" x-model="cfgForm.openai_url" class="form-input w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm font-mono bg-white">
+              </div>
+              <div>
+                <label class="text-xs text-stone-500 font-medium block mb-1.5">模型名称</label>
+                <input type="text" x-model="cfgForm.openai_model" class="form-input w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm font-mono bg-white">
+              </div>
+            </div>
+            <div>
+              <label class="text-xs text-stone-500 font-medium block mb-1.5">API Key</label>
+              <input type="password" x-model="cfgForm.openai_key" class="form-input w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm font-mono bg-white" :placeholder="cfgForm.openai_key_masked?'当前: '+cfgForm.openai_key_masked:''">
+            </div>
+          </div>
+        </div>
+
+        <!-- MCP Tools Info -->
+        <div class="bg-white rounded-xl p-6 border border-stone-200/80">
+          <div class="flex items-center gap-2.5 mb-5">
+            <div class="w-8 h-8 rounded-lg bg-stone-100 flex items-center justify-center">
+              <svg class="w-4 h-4 text-stone-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+            </div>
+            <h3 class="text-sm font-bold text-stone-900 font-display">MCP 工具注册表</h3>
+            <span class="text-[11px] text-stone-400 font-mono bg-stone-50 px-2 py-0.5 rounded" x-text="toolList.length+' 个工具'"></span>
+          </div>
+          <div class="space-y-1.5">
+            <template x-for="t in toolList" :key="t.name">
+              <div class="flex items-start gap-3 p-3 bg-stone-50 rounded-lg text-xs border border-stone-200/60 hover:border-stone-300 transition-colors">
+                <div class="font-mono font-semibold text-stone-800 shrink-0 max-w-[40%] break-all" x-text="t.name"></div>
+                <div class="text-stone-500 min-w-0 flex-1 break-words leading-relaxed" x-text="t.description"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex items-center gap-3">
+          <button @click="saveConfig()" class="flex items-center gap-2 bg-stone-900 hover:bg-stone-800 text-stone-50 px-6 py-2.5 rounded-lg text-sm font-medium transition-colors duration-200 focus-ring">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            保存配置
+          </button>
+          <span x-show="cfgSaved" class="text-emerald-600 text-sm flex items-center gap-1.5 animate-fade-in" x-transition>
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> 已保存（本次运行生效）
+          </span>
+          <span x-show="cfgError" class="text-red-500 text-sm flex items-center gap-1.5 animate-fade-in" x-transition>
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+            <span x-text="cfgError"></span>
+          </span>
+        </div>
+        <p class="text-[11px] text-stone-400 flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          配置修改后立即生效，但不写入 config.py 文件。重启服务后恢复为文件默认值。
+        </p>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+document.addEventListener('alpine:init',()=>{
+  Alpine.data('app',()=>({
+    // ── State ──
+    sysStatus:false, dataAvailable:false, dbType:'-', toolCount:0, pipelineRunning:false,
+    currentView:'overview', sidebarCollapsed:false,
+    chatHistoryOpen: true,
+    toast: { show: false, message: '', type: 'info' },
+    menus:[
+      {id:'overview',name:'数据大盘',desc:'核心 KPI 指标与客户分布总览',icon:'<svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'},
+      {id:'query',name:'数据查询',desc:'自然语言查询 · 可视化 · 预测分析',icon:'<svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/></svg>'},
+      {id:'settings',name:'系统设置',desc:'LLM API · MCP 工具 · 聚类参数配置',icon:'<svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>'},
+    ],
+    get currentMenu(){return this.menus.find(m=>m.id===this.currentView)||this.menus[0];},
+    colors:['#4f46e5','#0891b2','#059669','#d97706','#7c3aed','#db2777'],
+    kpiCards:[],
+    // Config form
+    cfgForm:{llm_provider:'ollama',ollama_url:'',ollama_model:'',openai_url:'',openai_model:'',openai_key:'',openai_key_masked:'',mcp_server_url:'http://127.0.0.1:5001',n_clusters:4,cluster_random_state:42},
+    cfgSaved:false, cfgError:'',
+    mcpStatus:'unknown', mcpStatusText:'未检测',
+    toolList:[],
+    // Chat state: conversations model
+    conversations: [],      // [{id, title, time, messages:[]}]
+    activeConvId: null,    // current active conversation id
+    messages: [],           // alias -> active conversation's messages (watched by template)
+    queryMode:'auto', userInput:'', chatLoading:false,
+
+    // ── Toast ──
+    showToast(message, type='info'){
+      this.toast={show:true,message,type};
+      clearTimeout(this._toastTimer);
+      this._toastTimer=setTimeout(()=>{this.toast.show=false;},4000);
+    },
+
+    // ── Copy to Clipboard ──
+    copyText(text, e){
+      navigator.clipboard.writeText(text).then(()=>{
+        if(e){
+          const btn=e.currentTarget;
+          const orig=btn.innerHTML;
+          btn.innerHTML='<svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>';
+          setTimeout(()=>{btn.innerHTML=orig;},1500);
+        }
+        this.showToast('已复制到剪贴板','success');
+      }).catch(()=>{this.showToast('复制失败','error');});
+    },
+
+    // ── Init ──
+    async initData(){
+      this.sidebarCollapsed = localStorage.getItem('sidebar_collapsed')==='1';
+      this.loadConversations();
+      try{
+        const health=await(await fetch('/api/health')).json();
+        this.sysStatus=true; this.dataAvailable=health.data_available; this.dbType=health.database; this.toolCount=health.tools_available.length;
+        if(this.dataAvailable) await this.loadStats();
+      }catch(e){this.sysStatus=false;}
+      try{
+        const cfg=await(await fetch('/api/config')).json();
+        Object.assign(this.cfgForm, cfg);
+      }catch(e){}
+      try{
+        const tl=await(await fetch('/api/tools')).json();
+        this.toolList=tl.tools||[];
+      }catch(e){}
+      this.checkMcpStatus();
+      this.$watch('currentView',val=>{
+        if(val==='overview'&&this.dataAvailable)this.$nextTick(()=>this.renderOverviewCharts());
+        if(val==='query'){
+          this.$nextTick(()=>this.scrollToBottom());
+          // 切换到 query 视图时恢复图表
+          if(this.messages.some(m=>m.hasChart))this.$nextTick(()=>this.restoreCharts());
+        }
+      });
+    },
+
+    saveSidebarState(){localStorage.setItem('sidebar_collapsed',this.sidebarCollapsed?'1':'0');},
+
+    // ── Conversation management ──
+    loadConversations(){
+      try{this.conversations=JSON.parse(localStorage.getItem('mcp_conversations')||'[]');}catch(e){this.conversations=[];}
+      if(this.conversations.length>0){
+        this.activeConvId=this.conversations[0].id;
+        this.messages=this.conversations[0].messages||[];
+      }else{
+        this.newConversation();
+      }
+    },
+    saveConversations(){
+      localStorage.setItem('mcp_conversations',JSON.stringify(this.conversations));
+    },
+    newConversation(){
+      const c={id:Date.now(),title:'新对话',time:new Date().toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}),messages:[]};
+      this.conversations.unshift(c);
+      this.activeConvId=c.id;
+      this.messages=c.messages;
+      this.saveConversations();
+      this.$nextTick(()=>this.scrollToBottom());
+    },
+    switchConversation(id){
+      const c=this.conversations.find(c=>c.id===id);
+      if(c){
+        this.activeConvId=c.id;
+        this.messages=c.messages;
+        // 切换对话后恢复图表
+        this.$nextTick(()=>this.restoreCharts());
+      }
+    },
+    deleteConversation(id){
+      this.conversations=this.conversations.filter(c=>c.id!==id);
+      if(this.activeConvId===id){
+        if(this.conversations.length>0){
+          this.activeConvId=this.conversations[0].id;
+          this.messages=this.conversations[0].messages;
+        }else{
+          this.newConversation();
+        }
+      }
+      this.saveConversations();
+    },
+    _activeConv(){
+      return this.conversations.find(c=>c.id===this.activeConvId);
+    },
+
+    async runPipeline(){
+      if(this.pipelineRunning)return; this.pipelineRunning=true;
+      try{
+        const r=await(await fetch('/api/pipeline/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({skip_db:false})})).json();
+        if(r.success){this.showToast('分析流水线执行完成，正在刷新...','success');setTimeout(()=>location.reload(),900);}
+        else{this.showToast('执行失败: '+(r.error||'未知错误'),'error');}
+      }catch(e){this.showToast('网络错误，请检查后端服务','error');}
+      this.pipelineRunning=false;
+    },
+
+    async loadStats(){
+      const stats=await(await fetch('/api/stats')).json();
+      this.kpiCards=[
+        {label:'注册客户总数',value:stats.rows.toLocaleString(),sub:'已清洗有效样本',bg:'bg-brand-50',color:'text-brand-600',icon:'<path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>'},
+        {label:'高价值客户占比',value:((stats.value_labels['高价值客户']/stats.rows)*100).toFixed(1)+'%',sub:'基于 RFM 模型',bg:'bg-emerald-50',color:'text-emerald-500',icon:'<path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>'},
+        {label:'平均飞行距离评分',value:stats.avg_rfm.M.toFixed(1)+' 分',sub:'M: Monetary 百分位评分',bg:'bg-amber-50',color:'text-amber-500',icon:'<path stroke-linecap="round" stroke-linejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>'},
+        {label:'特征分层簇数',value:Object.keys(stats.cluster_counts).length,sub:'K-Means 最优分离',bg:'bg-sky-50',color:'text-sky-500',icon:'<path stroke-linecap="round" stroke-linejoin="round" d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5"/>'}
+      ];
+      window._ov_data=stats;
+      if(this.currentView==='overview')this.$nextTick(()=>this.renderOverviewCharts());
+    },
+
+    // ── Save Config ──
+    async saveConfig(){
+      this.cfgSaved=false;this.cfgError='';
+      try{
+        const r=await(await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.cfgForm)})).json();
+        if(r.success){this.cfgSaved=true;this.showToast('配置已保存','success');setTimeout(()=>this.cfgSaved=false,4000);}else{this.cfgError=r.error||'保存失败';}
+      }catch(e){this.cfgError='网络错误';}
+    },
+
+    async checkMcpStatus(){
+      try{
+        const r = await(await fetch('/api/mcp/health',{signal:AbortSignal.timeout(3000)})).json();
+        if(r.status==='ok'){this.mcpStatus='connected';this.mcpStatusText=r.tools_count+' 工具在线';}
+        else{this.mcpStatus='error';this.mcpStatusText='响应异常';}
+      }catch(e){this.mcpStatus='down';this.mcpStatusText='无法连接';}
+    },
+
+    // ── Overview Charts ──
+    getEchartsBase(){return{backgroundColor:'transparent',color:this.colors,tooltip:{trigger:'item',backgroundColor:'rgba(255,255,255,.96)',borderColor:'#e7e5e4',textStyle:{color:'#44403c',fontSize:12},extraCssText:'box-shadow:0 4px 15px -3px rgba(28,25,23,.08);border-radius:8px;'}};},
+    renderOverviewCharts(){
+      const s=window._ov_data;if(!s)return;
+      const c1=echarts.init(document.getElementById('chart-ov-value'));
+      c1.setOption({...this.getEchartsBase(),series:[{type:'pie',radius:['45%','70%'],itemStyle:{borderColor:'#fff',borderWidth:2,borderRadius:6},label:{formatter:'{b}\n{d}%',color:'#78716c'},data:Object.keys(s.value_labels).map(k=>({name:k,value:s.value_labels[k]}))}]});
+      const c2=echarts.init(document.getElementById('chart-ov-cluster'));
+      c2.setOption({...this.getEchartsBase(),tooltip:{trigger:'axis'},grid:{top:'5%',left:'3%',right:'4%',bottom:'5%',containLabel:true},xAxis:{type:'category',data:Object.keys(s.cluster_counts).map(k=>'簇 '+k),axisLine:{show:false},axisTick:{show:false},axisLabel:{color:'#78716c'}},yAxis:{type:'value',splitLine:{lineStyle:{type:'dashed',color:'#e7e5e4'}},axisLabel:{color:'#78716c'}},series:[{type:'bar',data:Object.values(s.cluster_counts),barWidth:24,itemStyle:{borderRadius:[6,6,0,0],color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:'#4f46e5'},{offset:1,color:'#a5b4fc'}])}}]});
+      window.addEventListener('resize',()=>{c1.resize();c2.resize();});
+    },
+
+    // ── Chat ──
+    sendFastQuery(q){this.userInput=q;this.submitQuery();},
+
+    async submitQuery(){
+      if(!this.userInput.trim()||this.chatLoading)return;
+      const q=this.userInput.trim();this.userInput='';
+      this.messages.push({role:'user',content:q});
+      const mi=this.messages.length;
+      this.messages.push({role:'agent',loading:true,content:'',steps:[],hasChart:false,tableData:null,tableCols:[],tableTotal:0,queryId:null,page:1,pageSize:20,totalPages:1,pageLoading:false});
+      this.scrollToBottom();this.chatLoading=true;
+
+      const payload = { question: q, mode: 'auto', page_size: 20 };
+
+      try{
+        const res=await(await fetch('/api/chat',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(payload)
+        })).json();
+
+        let m=this.messages[mi];m.loading=false;
+        if(res.error){m.content='查询失败: '+res.error;}
+        else if(res.mode==='keyword'){
+          m.content='匹配到以下数据:';
+          if(res.rows&&res.rows.length>0){m.tableCols=res.columns;m.tableData=res.rows;m.tableTotal=res.total;}
+        }
+        else{
+            m.steps=res.steps||[];
+            m.content=res.answer||'查询完成。';
+            // 绑定 SQL 结果表格
+            const sqlStep=[...m.steps].reverse().find(s=>s.tool==='execute_secure_sql'&&s.success);
+            if(sqlStep&&sqlStep.result&&sqlStep.result.data){
+              m.tableCols=sqlStep.result.columns;
+              m.tableData=sqlStep.result.data;
+              m.tableTotal=sqlStep.result.total_rows||sqlStep.result.row_count;
+              m.queryId=sqlStep.result.query_id||null;
+              m.page=sqlStep.result.page||1;
+              m.pageSize=sqlStep.result.page_size||m.tableData.length||20;
+              m.totalPages=sqlStep.result.total_pages||1;
+            }
+            // 绑定其他工具的表格数据
+            if(!m.tableData){
+              for(const s of [...m.steps].reverse()){
+                if(s.success&&s.result&&s.result.data){
+                  m.tableData=s.result.data.slice(0,20);
+                  m.tableCols=s.result.data[0]?Object.keys(s.result.data[0]):[];
+                  m.tableTotal=s.result.data.length;
+                  break;
+                }
+                if(s.success&&s.result&&s.result.anomalies){
+                  m.tableData=s.result.anomalies.slice(0,20);
+                  m.tableCols=s.result.anomalies[0]?Object.keys(s.result.anomalies[0]):[];
+                  m.tableTotal=s.result.anomaly_count;
+                  break;
+                }
+              }
+            }
+            // 渲染图表
+            const chartStep=[...m.steps].reverse().find(s=>s.tool==='generate_visualization'&&s.success);
+            if(chartStep&&chartStep.result&&chartStep.result.echarts_option){
+              m.hasChart=true;
+              this.$nextTick(()=>{
+                const el=document.getElementById('chat-chart-'+mi);
+                if(el){
+                  const existing=echarts.getInstanceByDom(el);
+                  if(existing)existing.dispose();
+                  const c=echarts.init(el);
+                  c.setOption({...this.getEchartsBase(),...chartStep.result.echarts_option,backgroundColor:'transparent'});
+                  setTimeout(()=>c.resize(),100);
+                }
+              });
+            }
+        }
+        const conv=this._activeConv();
+        if(conv){
+          conv.title=q.slice(0,40);
+          conv.time=new Date().toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+          conv.messages=JSON.parse(JSON.stringify(this.messages));
+          conv.id=Date.now();
+          this.saveConversations();
+        }
+      }catch(e){this.messages[mi].loading=false;this.messages[mi].content='网络异常，请检查后端服务。';}
+      this.chatLoading=false;this.scrollToBottom();
+    },
+
+    bindTable(msg,res){if(res.rows&&res.rows.length>0){msg.tableCols=res.columns;msg.tableData=res.rows;msg.tableTotal=res.total;}},
+    async loadPage(idx,page){
+      const m=this.messages[idx];
+      if(!m||!m.queryId||m.pageLoading)return;
+      if(page<1||page>m.totalPages)return;
+      m.pageLoading=true;
+      try{
+        const res=await(await fetch('/api/chat/page',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({query_id:m.queryId,page:page,page_size:m.pageSize})
+        })).json();
+        if(res.success){
+          m.tableData=res.data;
+          m.page=res.page;
+          m.totalPages=res.total_pages;
+          m.tableTotal=res.total_rows;
+        }else{
+          m.content=(m.content?m.content+'\n':'')+res.error;
+        }
+      }catch(e){
+        m.content=(m.content?m.content+'\n':'')+'分页加载失败';
+      }
+      m.pageLoading=false;
+    },
+    scrollToBottom(){this.$nextTick(()=>{const c=document.getElementById('chatContainer');if(c)c.scrollTo({top:c.scrollHeight,behavior:'smooth'});});},
+    restoreCharts(){
+      // 使用递归重试确保 Alpine 渲染完成后再初始化图表
+      const tryRestore = (attempt = 0) => {
+        if (attempt > 10) return; // 最多重试 10 次
+
+        let allReady = true;
+        this.messages.forEach((msg, idx) => {
+          if (msg.hasChart && msg.steps) {
+            const chartStep = msg.steps.find(s => s.tool === 'generate_visualization' && s.success && s.result && s.result.echarts_option);
+            if (chartStep) {
+              const el = document.getElementById('chat-chart-' + idx);
+              if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) {
+                allReady = false;
+                return;
+              }
+              // 容器已就绪，初始化图表
+              const existing = echarts.getInstanceByDom(el);
+              if (existing) existing.dispose();
+              const c = echarts.init(el);
+              c.setOption({...this.getEchartsBase(), ...chartStep.result.echarts_option, backgroundColor: 'transparent'});
+              setTimeout(() => c.resize(), 100);
+            }
+          }
+        });
+
+        // 如果还有容器未就绪，继续重试
+        if (!allReady) {
+          setTimeout(() => tryRestore(attempt + 1), 200);
+        }
+      };
+
+      tryRestore();
+    },
+  }));
+});
+</script>
+</body>
+</html>
