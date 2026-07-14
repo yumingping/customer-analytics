@@ -94,11 +94,102 @@ SCHEMA_DEFINITION = {
 
 def get_database_schema() -> dict:
     """
-    获取完整的数据库 Schema 定义。
+    获取完整的数据库 Schema 定义（增强版）。
+    
+    混合策略：
+    1. 以硬编码的 SCHEMA_DEFINITION 为底座（保证字段描述、业务规则完备）
+    2. 动态查询实际数据库，注入真实信息（表是否存在、行数、实际列名、样本数据）
+    3. 如果实际列名与 Schema 不一致，以实际列名警告标注
+    
     AI 在编写任何查询前必须调用此工具，获取精准的表结构和业务字段释义。
-    （readme.md 第3.1节 — Schema 强制锚定 / Metadata Grounding）
     """
-    return SCHEMA_DEFINITION
+    import copy
+    schema = copy.deepcopy(SCHEMA_DEFINITION)
+
+    try:
+        from database import get_engine
+        from sqlalchemy import text as sa_text
+        engine = get_engine(readonly=True)
+
+        with engine.connect() as conn:
+            # ── 查询实际存在的表 ──
+            try:
+                actual_tables = conn.execute(
+                    sa_text("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                ).fetchall()
+            except Exception:
+                # MySQL 兼容
+                actual_tables = conn.execute(
+                    sa_text("SHOW TABLES")
+                ).fetchall()
+            actual_table_names = {str(row[0]) for row in actual_tables}
+
+            # ── 为每个表填充实际信息 ──
+            for tname in list(schema["tables"].keys()):
+                tinfo = schema["tables"][tname]
+
+                if tname not in actual_table_names:
+                    tinfo["_exists"] = False
+                    tinfo["_note"] = f"表 '{tname}' 不存在于当前数据库。可用表: {sorted(actual_table_names)}"
+                    continue
+
+                tinfo["_exists"] = True
+
+                try:
+                    # 行数
+                    row_count = conn.execute(sa_text(f"SELECT COUNT(*) FROM `{tname}`")).scalar()
+                    tinfo["row_count"] = int(row_count)
+                except Exception:
+                    tinfo["row_count"] = -1
+
+                try:
+                    # 实际列名（SQLite: PRAGMA, MySQL: SHOW COLUMNS）
+                    try:
+                        actual_cols = conn.execute(sa_text(f"PRAGMA table_info(`{tname}`)")).fetchall()
+                        actual_col_names = [row[1] for row in actual_cols]
+                    except Exception:
+                        actual_cols = conn.execute(sa_text(f"SHOW COLUMNS FROM `{tname}`")).fetchall()
+                        actual_col_names = [row[0] for row in actual_cols]
+
+                    tinfo["_actual_columns"] = actual_col_names
+
+                    # 对比 Schema 定义列 vs 实际列
+                    schema_cols = [c["name"] for c in tinfo.get("columns", [])]
+                    missing_from_schema = [c for c in actual_col_names if c not in schema_cols]
+                    missing_from_db = [c for c in schema_cols if c not in actual_col_names]
+                    if missing_from_db:
+                        tinfo["_missing_columns"] = missing_from_db
+                        tinfo["_warning"] = f"以下 Schema 定义的列在实际数据库中不存在: {missing_from_db}"
+                    if missing_from_schema:
+                        tinfo["_extra_columns"] = missing_from_schema
+
+                    # 保存到外层变量供样本数据使用
+                    _captured_col_names = actual_col_names
+                except Exception:
+                    _captured_col_names = None
+
+                try:
+                    # 样本数据（前 3 行）
+                    if tinfo.get("row_count", 0) > 0:
+                        sample = conn.execute(sa_text(f"SELECT * FROM `{tname}` LIMIT 3")).fetchall()
+                        if sample:
+                            col_names = _captured_col_names or [c["name"] for c in tinfo.get("columns", [])]
+                            sample_rows = []
+                            for row in sample:
+                                row_dict = {}
+                                for i, val in enumerate(row):
+                                    cn = col_names[i] if i < len(col_names) else f"col_{i}"
+                                    row_dict[cn] = str(val) if val is not None else "NULL"
+                                sample_rows.append(row_dict)
+                            tinfo["_sample_data"] = sample_rows
+                except Exception:
+                    pass
+
+    except Exception as e:
+        schema["_db_error"] = str(e)
+        schema["_note"] = "数据库连接失败，返回 Schema 理论定义（可能与实际不一致）"
+
+    return schema
 
 
 def get_table_schema(table_name: str) -> dict:

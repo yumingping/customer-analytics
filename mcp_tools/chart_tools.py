@@ -207,6 +207,9 @@ def generate_visualization(data_json: str, chart_type: str = "auto",
         "area_line": _build_area_line_option,
         "treemap": _build_treemap_option,
         "pareto": _build_pareto_option,
+        "map": _build_map_option,
+        "scatter3d": _build_scatter3d_option,
+        "sankey": _build_sankey_option,
     }
 
     builder = builders.get(chart_type, _build_bar_option)
@@ -714,4 +717,197 @@ def _build_pareto_option(df: pd.DataFrame, col_types: dict, title: str) -> dict:
             },
         ],
         "grid": {"bottom": 100},
+    }
+
+
+def _build_map_option(df: pd.DataFrame, col_types: dict, title: str) -> dict:
+    """
+    地理地图：需要地区名称列和数值列
+    注意：前端需要加载 GeoJSON 地图数据
+    """
+    cat_cols = [c for c, t in col_types.items() if t == "categorical"]
+    numeric_cols = [c for c, t in col_types.items() if t == "numeric"]
+
+    if not cat_cols or not numeric_cols:
+        return _build_bar_option(df, col_types, title)
+
+    name_col = cat_cols[0]
+    value_col = numeric_cols[0]
+
+    # 聚合数据
+    agg = df.groupby(name_col)[value_col].sum()
+    data = [
+        {"name": str(name), "value": float(val) if pd.notna(val) else 0}
+        for name, val in agg.items()
+    ]
+
+    return {
+        "title": {"text": title or "地理地图", "left": "center"},
+        "tooltip": {
+            "trigger": "item",
+            "formatter": "{b}: {c}"
+        },
+        "visualMap": {
+            "min": 0,
+            "max": max([d["value"] for d in data]) if data else 100,
+            "left": "left",
+            "top": "bottom",
+            "text": ["高", "低"],
+            "calculable": True,
+            "inRange": {
+                "color": ["#e0f3f8", "#ffffbf", "#fee090", "#fdae61", "#f46d43", "#d73027"]
+            }
+        },
+        "series": [{
+            "name": value_col,
+            "type": "map",
+            "map": "china",  # 需要前端注册地图
+            "roam": True,
+            "label": {
+                "show": True,
+                "fontSize": 10
+            },
+            "emphasis": {
+                "label": {"show": True},
+                "itemStyle": {"areaColor": "#ffd700"}
+            },
+            "data": data
+        }]
+    }
+
+
+def _build_scatter3d_option(df: pd.DataFrame, col_types: dict, title: str) -> dict:
+    """
+    3D 散点图：需要至少三个数值列
+    注意：需要 echarts-gl 扩展
+    """
+    numeric_cols = [c for c, t in col_types.items() if t == "numeric"]
+
+    if len(numeric_cols) < 3:
+        # 降级为普通散点图
+        return _build_scatter_option(df, col_types, title)
+
+    x_col, y_col, z_col = numeric_cols[0], numeric_cols[1], numeric_cols[2]
+
+    # 构建 3D 数据点
+    data = []
+    for _, row in df.iterrows():
+        x = float(row[x_col]) if pd.notna(row[x_col]) else 0
+        y = float(row[y_col]) if pd.notna(row[y_col]) else 0
+        z = float(row[z_col]) if pd.notna(row[z_col]) else 0
+        data.append([x, y, z])
+
+    return {
+        "title": {"text": title or "3D 散点图", "left": "center"},
+        "tooltip": {
+            "formatter": lambda idx: f"{x_col}: {data[idx][0]}<br/>{y_col}: {data[idx][1]}<br/>{z_col}: {data[idx][2]}"
+        },
+        "xAxis3D": {
+            "type": "value",
+            "name": x_col
+        },
+        "yAxis3D": {
+            "type": "value",
+            "name": y_col
+        },
+        "zAxis3D": {
+            "type": "value",
+            "name": z_col
+        },
+        "grid3D": {
+            "viewControl": {
+                "projection": "perspective",
+                "autoRotate": True
+            },
+            "light": {
+                "main": {"intensity": 1.2, "shadow": True},
+                "ambient": {"intensity": 0.3}
+            }
+        },
+        "series": [{
+            "type": "scatter3D",
+            "data": data,
+            "symbolSize": 8,
+            "itemStyle": {
+                "opacity": 0.8,
+                "color": "#6366f1"
+            },
+            "emphasis": {
+                "itemStyle": {
+                    "color": "#f59e0b"
+                }
+            }
+        }]
+    }
+
+
+def _build_sankey_option(df: pd.DataFrame, col_types: dict, title: str) -> dict:
+    """
+    桑基图：需要源节点列、目标节点列和流量值列
+    用于展示流向关系
+    """
+    cat_cols = [c for c, t in col_types.items() if t == "categorical"]
+    numeric_cols = [c for c, t in col_types.items() if t == "numeric"]
+
+    if len(cat_cols) < 2 or not numeric_cols:
+        return _build_bar_option(df, col_types, title)
+
+    source_col = cat_cols[0]
+    target_col = cat_cols[1]
+    value_col = numeric_cols[0]
+
+    # 构建节点和链接
+    nodes = set()
+    links = []
+
+    for _, row in df.iterrows():
+        source = str(row[source_col])
+        target = str(row[target_col])
+        value = float(row[value_col]) if pd.notna(row[value_col]) else 0
+
+        if value > 0:
+            nodes.add(source)
+            nodes.add(target)
+            links.append({
+                "source": source,
+                "target": target,
+                "value": value
+            })
+
+    # 合并相同源目标的链接
+    link_dict = {}
+    for link in links:
+        key = (link["source"], link["target"])
+        if key in link_dict:
+            link_dict[key]["value"] += link["value"]
+        else:
+            link_dict[key] = link.copy()
+
+    nodes_list = [{"name": name} for name in nodes]
+    links_list = list(link_dict.values())
+
+    return {
+        "title": {"text": title or "桑基图", "left": "center"},
+        "tooltip": {
+            "trigger": "item",
+            "formatter": "{b}: {c}"
+        },
+        "series": [{
+            "type": "sankey",
+            "layout": "none",
+            "emphasis": {
+                "focus": "adjacency"
+            },
+            "nodeAlign": "left",
+            "data": nodes_list,
+            "links": links_list,
+            "lineStyle": {
+                "color": "gradient",
+                "curveness": 0.5
+            },
+            "label": {
+                "show": True,
+                "fontSize": 12
+            }
+        }]
     }

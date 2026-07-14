@@ -104,13 +104,15 @@ def perform_dynamic_cluster(data_json: str, k: int = 4,
 def generate_visualization(data_json: str, chart_type: str = "auto",
                            title: str = "", purpose: str = "") -> dict:
     """根据数据自动选择最合适的图表类型，生成 ECharts 配置 JSON 供前端渲染。
-    支持 bar / pie / line / scatter / radar / heatmap。
+    支持 bar / pie / line / scatter / radar / heatmap / funnel / boxplot / gauge /
+    stacked_bar / area_line / treemap / pareto / map / scatter3d / sankey 等 16 种类型。
 
     Args:
         data_json: JSON 数组数据
-        chart_type: 图表类型 (auto/bar/pie/line/scatter/radar/heatmap)，默认自动选型
+        chart_type: 图表类型 (auto/bar/pie/line/scatter/radar/heatmap/funnel/boxplot/
+                    gauge/stacked_bar/area_line/treemap/pareto/map/scatter3d/sankey)
         title: 图表标题
-        purpose: 分析目的 (comparison/distribution/composition/relationship)
+        purpose: 分析目的 (comparison/distribution/composition/relationship/trend/ranking/funnel)
     """
     from mcp_tools.chart_tools import generate_visualization as _fn
     return _fn(data_json, chart_type=chart_type, title=title, purpose=purpose)
@@ -149,6 +151,78 @@ def get_business_rules() -> dict:
     return _fn()
 
 
+@mcp.tool()
+def forecast_trend(date_col: str = None, value_col: str = None,
+                   periods: int = 3, method: str = "linear",
+                   sql_query: str = None, table_name: str = None,
+                   data_json: str = None) -> dict:
+    """对时序数据进行趋势预测。优先使用 sql_query/table_name 从数据库直连加载全量数据。
+
+    【Compute-over-Data】: 工具内部直连数据库加载全量数据，不经过 LLM 上下文，消除截断。
+
+    Args:
+        sql_query: 【推荐】SQL 查询，工具内部直接查库（不经过 LLM，无截断）
+        table_name: 表名，直接读取全表
+        data_json: JSON 字符串（降级通道，仅小数据测试）
+        date_col: 时间列名（可选，自动识别）
+        value_col: 数值列名（可选，自动取第一个数值列）
+        periods: 向后预测期数，默认 3
+        method: "linear"(线性回归) 或 "exponential_smoothing"(指数平滑)
+    """
+    from mcp_tools.forecast_tools import forecast_trend as _fn
+    return _fn(date_col=date_col, value_col=value_col,
+               periods=periods, method=method,
+               sql_query=sql_query, table_name=table_name, data_json=data_json)
+
+
+@mcp.tool()
+def detect_anomalies(columns: list = None,
+                     method: str = "iqr", contamination: float = 0.05,
+                     sql_query: str = None, table_name: str = None,
+                     data_json: str = None) -> dict:
+    """检测数据中的异常值。优先使用 sql_query/table_name 从数据库直连加载全量数据。
+
+    【Compute-over-Data】: 工具内部直连数据库加载全量数据，不经过 LLM 上下文，消除截断。
+
+    Args:
+        sql_query: 【推荐】SQL 查询，工具内部直接查库（不经过 LLM，无截断）
+        table_name: 表名，直接读取全表
+        data_json: JSON 字符串（降级通道，仅小数据测试）
+        columns: 要检测的数值列列表（可选，默认检测所有数值列）
+        method: "iqr"(默认) 或 "isolation_forest"
+        contamination: IsolationForest 的异常比例，默认 0.05
+    """
+    from mcp_tools.forecast_tools import detect_anomalies as _fn
+    return _fn(columns=columns, method=method, contamination=contamination,
+               sql_query=sql_query, table_name=table_name, data_json=data_json)
+
+
+@mcp.tool()
+def churn_risk_score(recency_col: str = "recency",
+                     frequency_col: str = "flight_count",
+                     monetary_col: str = "seg_km_sum",
+                     sql_query: str = None, table_name: str = None,
+                     data_json: str = None) -> dict:
+    """基于 RFM 特征计算客户流失风险评分。优先使用 sql_query/table_name 从数据库直连加载全量数据。
+
+    【Compute-over-Data】: 工具内部直连数据库加载全量数据（62,987 行），
+    不经过 LLM 上下文，彻底消除 30 行截断问题。仅返回聚合摘要。
+
+    Args:
+        sql_query: 【推荐】SQL 查询，工具内部直接查库（不经过 LLM，无截断）
+                   示例: "SELECT member_no, recency, flight_count, seg_km_sum FROM customer_flight_summary"
+        table_name: 表名，直接读取全表（如 "customer_flight_summary"）
+        data_json: JSON 字符串（降级通道，仅小数据测试）
+        recency_col: Recency 列名（默认 recency）
+        frequency_col: Frequency 列名（默认 flight_count）
+        monetary_col: Monetary 列名（默认 seg_km_sum）
+    """
+    from mcp_tools.forecast_tools import churn_risk_score as _fn
+    return _fn(recency_col=recency_col,
+               frequency_col=frequency_col, monetary_col=monetary_col,
+               sql_query=sql_query, table_name=table_name, data_json=data_json)
+
+
 # ==================== 健康检查端点 ====================
 
 @mcp.custom_route("/health", methods=["GET"])
@@ -158,7 +232,7 @@ async def health_check(request):
     return JSONResponse({
         "status": "ok",
         "server": "airline-analytics-mcp",
-        "tools_count": 9,
+        "tools_count": 12,
         "transport": "sse"
     })
 
@@ -185,7 +259,8 @@ async def list_tools_rest(request):
 
 @mcp.custom_route("/tools/call", methods=["POST"])
 async def call_tool_rest(request):
-    """调用工具（REST API）- 解析 MCP 标准格式，返回纯 JSON"""
+    """调用工具（REST API）- 解析 MCP 标准格式，返回纯 JSON。
+    对大数据结果自动截断，防止 LLM 上下文溢出。"""
     from starlette.responses import JSONResponse
     try:
         data = await request.json()
@@ -217,10 +292,13 @@ async def call_tool_rest(request):
         else:
             parsed_result = {"result": str(result)}
         
+        # 截断大数据结果：SQL 查询只保留前 100 行样本
+        parsed_result = _truncate_api_result(tool_name, parsed_result)
+        
         return JSONResponse({
             "success": True,
             "tool": tool_name,
-            "result": parsed_result  # 直接返回解析后的字典
+            "result": parsed_result
         })
     except Exception as e:
         return JSONResponse({
@@ -228,6 +306,20 @@ async def call_tool_rest(request):
             "error": str(e),
             "tool": data.get("name") if 'data' in locals() else None
         }, status_code=500)
+
+
+def _truncate_api_result(tool_name: str, result: dict) -> dict:
+    """API 层截断：对 execute_secure_sql 等大数据工具，保留前 100 行"""
+    if not isinstance(result, dict):
+        return result
+    MAX_API_ROWS = 100
+    for key in ("data", "anomalies", "data_with_labels"):
+        if key in result and isinstance(result[key], list) and len(result[key]) > MAX_API_ROWS:
+            result = dict(result)
+            result[key] = result[key][:MAX_API_ROWS]
+            result["_truncated"] = True
+            result["_note"] = f"API 层截断：仅返回前 {MAX_API_ROWS} 行"
+    return result
 
 
 # ==================== 启动 ====================

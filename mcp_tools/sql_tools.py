@@ -16,6 +16,52 @@ from pathlib import Path
 import config
 
 
+# ==================== 辅助清洗与安全转换函数 ====================
+
+def _clean_sql_for_validation(sql_query: str) -> str:
+    """
+    去除 SQL 中的单行注释和多行注释，以及多余的首尾空格。
+    保证开头关键词判断（如 select, with）不受注释干扰。
+    """
+    # 1. 去除多行注释 /* ... */
+    sql_clean = re.sub(r'/\*.*?\*/', '', sql_query, flags=re.DOTALL)
+    # 2. 去除单行注释 -- ... 或 # ...
+    sql_lines = []
+    for line in sql_clean.splitlines():
+        line_clean = re.sub(r'(--|#).*$', '', line)
+        sql_lines.append(line_clean)
+
+    return "\n".join(sql_lines).strip()
+
+
+def _serialize_dataframe(df: pd.DataFrame) -> list:
+    """
+    安全地将 DataFrame 转换为 JSON 序列化的 dict 列表。
+    优雅处理 Timestamp, datetime, Decimal, NaN, NaT，避免 JSON 编码崩溃。
+    """
+    if df.empty:
+        return []
+
+    df_copy = df.copy()
+
+    for col in df_copy.columns:
+        # 1. 处理时间戳类型
+        if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
+            df_copy[col] = df_copy[col].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
+        # 2. 处理对象类型（如 Decimal, datetime.date 等）
+        elif pd.api.types.is_object_dtype(df_copy[col]):
+            df_copy[col] = df_copy[col].apply(
+                lambda x: str(x) if hasattr(x, 'strftime')
+                else (float(x) if type(x).__name__ == 'Decimal'
+                      else ('' if pd.isna(x) else x))
+            )
+        # 3. 处理其他数值类型，填充 NaN 为空
+        else:
+            df_copy[col] = df_copy[col].fillna('')
+
+    return df_copy.to_dict(orient="records")
+
+
 # ==================== SQL 安全检查 ====================
 
 def validate_sql_syntax(sql_query: str) -> dict:
@@ -29,11 +75,16 @@ def validate_sql_syntax(sql_query: str) -> dict:
     if not sql_query or not isinstance(sql_query, str):
         return {"valid": False, "errors": ["SQL 查询不能为空"]}
 
-    sql_stripped = sql_query.strip().lower()
+    # 清洗注释干扰并转为小写
+    sql_cleaned = _clean_sql_for_validation(sql_query)
+    sql_stripped = sql_cleaned.lower()
 
-    # 2. 只允许 SELECT
-    if not sql_stripped.startswith("select"):
-        errors.append("仅允许执行 SELECT 语句")
+    if not sql_stripped:
+        return {"valid": False, "errors": ["SQL 查询不能为空"]}
+
+    # 2. 只允许 SELECT 或 WITH 开头的查询 (CTE 表达式)
+    if not (sql_stripped.startswith("select") or sql_stripped.startswith("with")):
+        errors.append("仅允许执行 SELECT 或 WITH (CTE) 语句")
         return {"valid": False, "errors": errors}
 
     # 3. 黑名单关键词检测
@@ -44,7 +95,7 @@ def validate_sql_syntax(sql_query: str) -> dict:
     # 4. sqlparse 语法解析（可选）
     try:
         import sqlparse
-        parsed = sqlparse.parse(sql_query)
+        parsed = sqlparse.parse(sql_cleaned)
         if not parsed:
             errors.append("SQL 解析失败: 无法识别")
         else:
@@ -54,7 +105,7 @@ def validate_sql_syntax(sql_query: str) -> dict:
                 errors.append("不允许同时执行多条 SQL 语句")
     except ImportError:
         pass  # sqlparse 未安装则跳过
-    except Exception as e:
+    except Exception:
         pass  # 解析失败不影响执行
 
     return {"valid": len(errors) == 0, "errors": errors}
@@ -79,7 +130,8 @@ def execute_secure_sql(sql_query: str, sandbox_db_path: str = None,
             "data": [...],       # 结果行列表（JSON）
             "columns": [...],    # 列名
             "row_count": int,    # 返回行数
-            "error": str | None, # 错误信息（含堆栈）
+            "error": str | None, # 错误信息（含修复提示）
+            "error_hint": str,   # 失败时给出修复建议
         }
     """
     # 1. 语法校验
@@ -92,7 +144,25 @@ def execute_secure_sql(sql_query: str, sandbox_db_path: str = None,
             "row_count": 0,
             "error": "; ".join(validation["errors"]),
             "error_type": "validation_error",
+            "error_hint": "请检查 SQL 语法，仅允许 SELECT 或 WITH 语句",
         }
+
+    # ── 执行前 Schema 校验：提取引用的表名和列名，验证是否存在 ──
+    try:
+        _pre_validate_schema(sql_query)
+    except ValueError as e:
+        return {
+            "success": False,
+            "data": None,
+            "columns": None,
+            "row_count": 0,
+            "error": str(e),
+            "error_type": "schema_validation_error",
+            "error_hint": "请先调用 get_database_schema 确认实际数据库中的表名",
+        }
+
+    # 转义 SQL 中可能包含的冒号（如时间常量 '12:00:00'），防止 SQLAlchemy 参数绑定报错
+    safe_sql = sql_query.replace(':', '\\:')
 
     # 2. 优先尝试 MySQL
     engine = None
@@ -102,11 +172,11 @@ def execute_secure_sql(sql_query: str, sandbox_db_path: str = None,
         if engine_type == "mysql":
             engine = _get_db_engine(readonly=True)
             with engine.connect() as conn:
-                result_df = pd.read_sql(text(sql_query), conn)
+                result_df = pd.read_sql(text(safe_sql), conn)
 
             return {
                 "success": True,
-                "data": result_df.fillna("").to_dict(orient="records"),
+                "data": _serialize_dataframe(result_df),
                 "columns": result_df.columns.tolist(),
                 "row_count": len(result_df),
                 "error": None,
@@ -129,11 +199,11 @@ def execute_secure_sql(sql_query: str, sandbox_db_path: str = None,
             _write_dataframe_to_sandbox(engine, data_source)
 
         with engine.connect() as conn:
-            result_df = pd.read_sql(text(sql_query), conn)
+            result_df = pd.read_sql(text(safe_sql), conn)
 
         return {
             "success": True,
-            "data": result_df.fillna("").to_dict(orient="records"),
+            "data": _serialize_dataframe(result_df),
             "columns": result_df.columns.tolist(),
             "row_count": len(result_df),
             "error": None,
@@ -142,18 +212,111 @@ def execute_secure_sql(sql_query: str, sandbox_db_path: str = None,
 
     except Exception as e:
         tb = traceback.format_exc()
+        error_msg = str(e)
+        # 增强错误提示：提取实际可用的表/列信息
+        error_hint = _build_error_hint(sql_query, error_msg)
         return {
             "success": False,
             "data": None,
             "columns": None,
             "row_count": 0,
-            "error": str(e),
+            "error": error_msg,
             "error_traceback": tb,
             "error_type": type(e).__name__,
+            "error_hint": error_hint,
         }
     finally:
         if engine is not None:
             engine.dispose()
+
+
+def _pre_validate_schema(sql_query: str):
+    """
+    执行前校验：提取 SQL 中引用的表名，确认实际数据库中存在。
+    已处理：自动忽略 CTE 临时表名与子查询别名，防止引发误报。
+    """
+    import re
+    actual_table_names = set()
+
+    # 1. 优先尝试从主数据库连接获取表名
+    try:
+        from database import get_engine
+        from sqlalchemy import text as sa_text
+        engine = get_engine(readonly=True)
+        with engine.connect() as conn:
+            try:
+                actual_tables = conn.execute(
+                    sa_text("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                ).fetchall()
+            except Exception:
+                actual_tables = conn.execute(sa_text("SHOW TABLES")).fetchall()
+            actual_table_names = {str(row[0]).lower() for row in actual_tables}
+    except Exception:
+        pass
+
+    # 2. 如果主数据库获取失败，尝试直接从本地 SQLite 沙箱文件读取表名
+    if not actual_table_names:
+        try:
+            db_path = config.SQLITE_PATH
+            if Path(db_path).exists():
+                local_engine = create_engine(f"sqlite:///{db_path}")
+                with local_engine.connect() as conn:
+                    actual_tables = conn.execute(
+                        text("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                    ).fetchall()
+                    actual_table_names = {str(row[0]).lower() for row in actual_tables}
+                local_engine.dispose()
+        except Exception:
+            pass
+
+    # 如果无法获取到任何表结构，说明数据库尚未配置或初始化，此时跳过校验，直接让执行阶段抛出异常
+    if not actual_table_names:
+        return
+
+    sql_lower = sql_query.lower()
+
+    # 3. 提取 SQL 中的 CTE (临时表) 声明名称。如: with cte_name as ( ...
+    cte_names = set()
+    for match in re.finditer(r'\b(\w+)\s+as\s*\(', sql_lower):
+        cte_names.add(match.group(1))
+
+    # 4. 提取 SQL 中 FROM / JOIN 后的表名 (支持引号、反单引号和中括号包裹的格式)
+    ref_tables = set()
+    for match in re.finditer(r'\b(?:from|join)\s+[`"\'\[]?(\w+)[`"\'\]]?', sql_lower):
+        ref_tables.add(match.group(1))
+
+    # 5. 求差集：引用的表 减去 数据库已存表 减去 CTE临时表
+    missing = ref_tables - actual_table_names - cte_names
+
+    # 排除系统级虚表、元数据表
+    missing = {t for t in missing if t not in ('dual', 'sqlite_master', 'information_schema')}
+
+    if missing:
+        raise ValueError(
+            f"表不存在: {', '.join(sorted(missing))}。"
+            f"当前数据库中的表: {', '.join(sorted(actual_table_names))}"
+        )
+
+
+def _build_error_hint(sql_query: str, error_msg: str) -> str:
+    """根据错误信息构建修复提示"""
+    error_lower = error_msg.lower()
+    hints = []
+
+    if "no such table" in error_lower or ("table" in error_lower and "doesn't exist" in error_lower):
+        hints.append(f"请检查表名是否正确。可用表: customer_base, customer_flight_summary, customer_analytics, customer_rfm")
+    if "no such column" in error_lower or "unknown column" in error_lower or "column" in error_lower:
+        hints.append("请检查列名是否正确。建议先调用 get_database_schema 确认实际列名")
+        hints.append("注意：数据库中的列名可能与 Schema 定义不同，请以 _actual_columns 为准")
+    if "syntax error" in error_lower or "near" in error_lower:
+        hints.append("请检查 SQL 语法，尤其是中文别名、引号、逗号、括号是否闭合等")
+    if "ambiguous column" in error_lower:
+        hints.append("列名在多个表中存在，请使用表别名前缀（如 b.member_no, a.value_label）")
+
+    if not hints:
+        hints.append("请先调用 get_database_schema 确认表结构和可用列名")
+
+    return "；".join(hints)
 
 
 # ── 三表列映射（CSV 原始列名 → DB 列名）──
@@ -188,11 +351,21 @@ _WIDE_COL_MAP = {
 
 
 def _map_columns(df: pd.DataFrame, col_map: dict) -> pd.DataFrame:
-    """从 DataFrame 提取并重命名列，不依赖 SQLAlchemy 类型"""
+    """
+    从 DataFrame 提取并重命名列，不依赖 SQLAlchemy 类型。
+    不区分大小写匹配，大幅提升数据导入容错率。
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    df_cols_lower = {col.lower(): col for col in df.columns}
     data = {}
     for src, dst in col_map.items():
-        if src in df.columns:
-            data[dst] = df[src]
+        src_lower = src.lower()
+        if src_lower in df_cols_lower:
+            orig_col = df_cols_lower[src_lower]
+            data[dst] = df[orig_col]
+
     return pd.DataFrame(data) if data else pd.DataFrame()
 
 
@@ -340,8 +513,11 @@ def llm_fix_sql(original_sql: str, error_message: str,
     返回修正提示词，让 AI 据此重新生成 SQL。
     """
     if schema is None:
-        from mcp_tools.probing_tools import get_database_schema
-        schema = get_database_schema()
+        try:
+            from mcp_tools.probing_tools import get_database_schema
+            schema = get_database_schema()
+        except Exception:
+            schema = {}
 
     # 提取关键表字段（简化版）
     tables_info = schema.get("tables", {})
@@ -350,23 +526,21 @@ def llm_fix_sql(original_sql: str, error_message: str,
         cols = [c["name"] for c in tinfo.get("columns", [])]
         field_list.append(f"  {tname}: {', '.join(cols)}")
 
+    # 避免在低版本 Python 3 的 f-string 内部进行复杂的换行连接，防止表达式报错
+    fields_str = "\n".join(field_list)
+
     fix_prompt = f"""之前的 SQL 执行失败，请修正。
 
 原始 SQL:
 ```sql
 {original_sql}
-```
-
 错误信息:
 {error_message}
-
 可用的数据表与字段:
-{chr(10).join(field_list)}
-
+{fields_str}
 业务规则:
-- value_label 取值: '高价值客户', '中价值客户', '低价值客户', '流失客户'
-- gender 取值: '男', '女', '未知'
-- cluster 取值: 0, 1, 2, 3
-
+value_label 取值: '高价值客户', '中价值客户', '低价值客户', '流失客户'
+gender 取值: '男', '女', '未知'
+cluster 取值: 0, 1, 2, 3
 请只返回修正后的纯 SELECT SQL 语句。"""
     return {"fix_prompt": fix_prompt, "original_sql": original_sql}

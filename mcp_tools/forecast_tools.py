@@ -5,6 +5,11 @@ MCP 工具: 预测与异常检测 (forecast_tools)
 - forecast_trend(): 简单趋势预测（线性回归 / 指数平滑）
 - detect_anomalies(): 基于 IQR / Z-Score 的异常值检测
 - churn_risk_score(): 基于 RFM 特征的流失风险评分
+
+【Compute-over-Data 架构】
+所有工具优先支持 sql_query / table_name 参数，在工具内部直连数据库加载全量数据，
+绕过 LLM 上下文传输，彻底消除数据截断问题。
+data_json 仅作为降级通道（小数据量测试用）。
 """
 import json
 import pandas as pd
@@ -13,35 +18,99 @@ from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import IsolationForest
 
 
-def forecast_trend(data_json: str, date_col: str = None, value_col: str = None,
-                   periods: int = 3, method: str = "linear") -> dict:
+# ==================== 共享数据加载器 ====================
+
+def _load_dataframe(sql_query: str = None, table_name: str = None,
+                    data_json: str = None, max_rows: int = None) -> pd.DataFrame:
     """
-    对时序数据进行趋势预测。
+    统一数据加载器：优先 sql_query → table_name → data_json。
+    从数据库加载时，数据不经过 LLM 上下文，不受截断限制。
+    返回 (DataFrame, source_description)。
+    """
+    # 通道 1：SQL 直连数据库（全量，无截断）
+    if sql_query:
+        try:
+            from database import get_engine
+            from sqlalchemy import text as sa_text
+            engine = get_engine(readonly=True)
+            with engine.connect() as conn:
+                df = pd.read_sql(sa_text(sql_query), conn)
+            print(f"[数据加载] SQL 查询返回 {len(df)} 行")
+            if max_rows and len(df) > max_rows:
+                df = df.head(max_rows)
+            return df
+        except Exception as e:
+            raise ValueError(f"SQL 查询失败: {e}")
+
+    # 通道 2：表名全量读取（全量，无截断）
+    if table_name:
+        try:
+            from database import get_engine
+            from sqlalchemy import text as sa_text
+            engine = get_engine(readonly=True)
+            with engine.connect() as conn:
+                df = pd.read_sql(sa_text(f"SELECT * FROM `{table_name}`"), conn)
+            print(f"[数据加载] 表 {table_name} 返回 {len(df)} 行")
+            if max_rows and len(df) > max_rows:
+                df = df.head(max_rows)
+            return df
+        except Exception as e:
+            raise ValueError(f"读取表 {table_name} 失败: {e}")
+
+    # 通道 3：JSON 降级（小数据，兼容旧逻辑）
+    if data_json:
+        try:
+            data = json.loads(data_json) if isinstance(data_json, str) else data_json
+            df = pd.DataFrame(data)
+            print(f"[数据加载] JSON 解析返回 {len(df)} 行")
+            return df
+        except (json.JSONDecodeError, ValueError) as e:
+            raise ValueError(f"JSON 解析失败: {e}")
+
+    raise ValueError("必须提供 sql_query、table_name 或 data_json 之一")
+
+
+def _build_data_source_info(sql_query: str, table_name: str, data_json: str) -> str:
+    """构建数据来源描述"""
+    if sql_query:
+        return f"SQL: {sql_query[:80]}..."
+    if table_name:
+        return f"表: {table_name}"
+    return "JSON 数据"
+
+
+# ==================== 趋势预测 ====================
+
+
+def forecast_trend(date_col: str = None, value_col: str = None,
+                   periods: int = 3, method: str = "linear",
+                   sql_query: str = None, table_name: str = None,
+                   data_json: str = None) -> dict:
+    """
+    对时序数据进行趋势预测。优先使用 sql_query/table_name 从数据库直连加载全量数据。
 
     参数:
-        data_json: JSON 字符串，格式 [{"date": "2024-01", "value": 100}, ...]
+        sql_query: 【推荐】SQL 查询语句，工具内部直接查库加载全量数据（不经过 LLM，无截断）
+        table_name: 表名，直接读取全表
+        data_json: JSON 字符串（降级通道，仅用于小数据量测试）
         date_col: 时间列名，为空则自动识别含 date/time/year/month 的列
         value_col: 数值列名，为空则自动识别第一个数值列
         periods: 向后预测期数，默认 3
         method: "linear" 或 "exponential_smoothing"
 
     返回:
-        {
-            "success": bool,
-            "method": str,
-            "historical": [{"x": ..., "y": ...}],
-            "forecast": [{"x": ..., "y": ...}],
-            "trend": {"slope": float, "intercept": float},
-        }
+        { "success": bool, "method": str, "historical": [...], "forecast": [...],
+          "total_rows": int, "data_source": str }
     """
     try:
-        data = json.loads(data_json) if isinstance(data_json, str) else data_json
-        df = pd.DataFrame(data)
-    except (json.JSONDecodeError, ValueError) as e:
-        return {"success": False, "error": f"数据解析失败: {e}"}
+        df = _load_dataframe(sql_query=sql_query, table_name=table_name, data_json=data_json)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
 
     if df.empty:
         return {"success": False, "error": "数据为空"}
+
+    total_rows = len(df)
 
     # 自动识别列
     if value_col is None or value_col not in df.columns:
@@ -67,7 +136,6 @@ def forecast_trend(data_json: str, date_col: str = None, value_col: str = None,
     y = df[value_col].values
 
     if method == "exponential_smoothing":
-        # 简单指数平滑：alpha=0.3
         alpha = 0.3
         smoothed = [y[0]]
         for val in y[1:]:
@@ -77,7 +145,6 @@ def forecast_trend(data_json: str, date_col: str = None, value_col: str = None,
         forecast_values = [last_level + (i + 1) * trend for i in range(periods)]
         model_desc = f"指数平滑(α={alpha})"
     else:
-        # 线性回归
         model = LinearRegression()
         model.fit(X, y)
         forecast_values = [model.predict([[len(df) + i]])[0] for i in range(periods)]
@@ -102,39 +169,39 @@ def forecast_trend(data_json: str, date_col: str = None, value_col: str = None,
         "historical": historical,
         "forecast": forecast,
         "trend": trend if method == "linear" else {"last_level": round(float(last_level), 2), "trend": round(float(trend), 4)},
+        "total_rows": total_rows,
+        "data_source": _build_data_source_info(sql_query, table_name, data_json),
     }
 
 
-def detect_anomalies(data_json: str, columns: list = None,
-                     method: str = "iqr", contamination: float = 0.05) -> dict:
+def detect_anomalies(columns: list = None,
+                     method: str = "iqr", contamination: float = 0.05,
+                     sql_query: str = None, table_name: str = None,
+                     data_json: str = None) -> dict:
     """
-    检测数据中的异常值。
+    检测数据中的异常值。优先使用 sql_query/table_name 从数据库直连加载全量数据。
 
     参数:
-        data_json: JSON 字符串
+        sql_query: 【推荐】SQL 查询语句，工具内部直接查库加载全量数据（不经过 LLM，无截断）
+        table_name: 表名，直接读取全表
+        data_json: JSON 字符串（降级通道，仅用于小数据量测试）
         columns: 要检测的数值列，为空则检测所有数值列
         method: "iqr" 或 "isolation_forest"
         contamination: IsolationForest 的异常比例，默认 0.05
 
     返回:
-        {
-            "success": bool,
-            "method": str,
-            "total": int,
-            "anomaly_count": int,
-            "anomaly_indices": [...],
-            "summary": { col: {lower, upper, mean, std} },
-            "anomalies": [...]  # 异常样本
-        }
+        { "success": bool, "method": str, "total": int, "anomaly_count": int,
+          "anomaly_rate": float, "summary": {...}, "data_source": str }
     """
     try:
-        data = json.loads(data_json) if isinstance(data_json, str) else data_json
-        df = pd.DataFrame(data)
-    except (json.JSONDecodeError, ValueError) as e:
-        return {"success": False, "error": f"数据解析失败: {e}"}
+        df = _load_dataframe(sql_query=sql_query, table_name=table_name, data_json=data_json)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
 
     if df.empty:
         return {"success": False, "error": "数据为空"}
+
+    total_rows = len(df)
 
     if columns is None:
         columns = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -147,7 +214,6 @@ def detect_anomalies(data_json: str, columns: list = None,
     numeric_df = df[columns].apply(pd.to_numeric, errors="coerce")
 
     if method == "isolation_forest":
-        # 需要完整数值，缺失值填充均值
         filled = numeric_df.fillna(numeric_df.mean())
         if len(filled) < 2:
             return {"success": False, "error": "有效样本不足"}
@@ -155,7 +221,7 @@ def detect_anomalies(data_json: str, columns: list = None,
         preds = clf.fit_predict(filled)
         mask = preds == -1
     else:
-        # IQR 方法：任一列为异常即标记
+        # IQR 方法
         mask = pd.Series(False, index=df.index)
         bounds = {}
         for col in columns:
@@ -167,8 +233,7 @@ def detect_anomalies(data_json: str, columns: list = None,
             bounds[col] = {"lower": round(float(lower), 2), "upper": round(float(upper), 2)}
             mask = mask | numeric_df[col].lt(lower) | numeric_df[col].gt(upper)
 
-    anomaly_indices = df[mask].index.tolist()
-    anomalies = df[mask].head(50).fillna("").to_dict(orient="records")
+    anomaly_count = int(mask.sum())
 
     summary = {}
     for col in columns:
@@ -184,58 +249,69 @@ def detect_anomalies(data_json: str, columns: list = None,
     return {
         "success": True,
         "method": method,
-        "total": len(df),
-        "anomaly_count": int(mask.sum()),
-        "anomaly_indices": anomaly_indices,
+        "total": total_rows,
+        "anomaly_count": anomaly_count,
+        "anomaly_rate": round(anomaly_count / total_rows * 100, 2) if total_rows > 0 else 0,
         "summary": summary,
-        "anomalies": anomalies,
         "columns_checked": columns,
+        "data_source": _build_data_source_info(sql_query, table_name, data_json),
     }
 
 
-def churn_risk_score(data_json: str, recency_col: str = "Recency",
-                     frequency_col: str = "Frequency",
-                     monetary_col: str = "Monetary") -> dict:
+def churn_risk_score(recency_col: str = "recency",
+                     frequency_col: str = "flight_count",
+                     monetary_col: str = "seg_km_sum",
+                     sql_query: str = None, table_name: str = None,
+                     data_json: str = None) -> dict:
     """
-    基于 RFM 特征计算每个客户的流失风险评分。
-    规则：Recency 越高、Frequency/Monetary 越低，流失风险越高。
+    基于 RFM 特征计算客户流失风险评分。优先使用 sql_query/table_name 从数据库直连加载全量数据。
+
+    【Compute-over-Data】: 工具内部直连数据库加载全量数据（62,987 行），
+    不经过 LLM 上下文，彻底消除 30 行截断问题。仅返回聚合摘要。
 
     参数:
-        data_json: JSON 字符串，必须包含 R/F/M 列
-        recency_col, frequency_col, monetary_col: 列名
+        sql_query: 【推荐】SQL 查询语句，工具内部直接查库加载全量数据（不经过 LLM，无截断）
+                   示例: "SELECT member_no, recency, flight_count, seg_km_sum FROM customer_flight_summary"
+        table_name: 表名，直接读取全表（如 "customer_flight_summary"）
+        data_json: JSON 字符串（降级通道，仅用于小数据量测试）
+        recency_col: Recency 列名（默认 recency）
+        frequency_col: Frequency 列名（默认 flight_count）
+        monetary_col: Monetary 列名（默认 seg_km_sum）
 
     返回:
-        {
-            "success": bool,
-            "risk_col": "churn_risk_score",
-            "distribution": {"低风险": n, "中风险": n, "高风险": n},
-            "data": [...]  # 前 20 条带评分样本
-        }
+        { "success": bool, "total_modeled": int, "distribution": {...},
+          "avg_score": float, "data_source": str }
     """
     try:
-        data = json.loads(data_json) if isinstance(data_json, str) else data_json
-        df = pd.DataFrame(data)
-    except (json.JSONDecodeError, ValueError) as e:
-        return {"success": False, "error": f"数据解析失败: {e}"}
+        df = _load_dataframe(sql_query=sql_query, table_name=table_name, data_json=data_json)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
 
     if df.empty:
         return {"success": False, "error": "数据为空"}
 
-    # 允许别名
+    total_rows = len(df)
+
+    # 模糊匹配列名（大小写不敏感）
+    col_lower = {c.lower(): c for c in df.columns}
+
+    def find_col(preferred, aliases):
+        """多级匹配：精确 → 大小写不敏感 → 别名列表"""
+        if preferred in df.columns:
+            return preferred
+        if preferred.lower() in col_lower:
+            return col_lower[preferred.lower()]
+        for a in aliases:
+            for c in df.columns:
+                if c.lower() == a.lower():
+                    return c
+        return None
+
     alias_map = {
         recency_col: ["Recency", "recency", "R", "last_flight_days"],
         frequency_col: ["Frequency", "frequency", "F", "flight_count"],
         monetary_col: ["Monetary", "monetary", "M", "seg_km_sum", "bp_sum"],
     }
-
-    def find_col(preferred, aliases):
-        if preferred in df.columns:
-            return preferred
-        for a in aliases:
-            candidates = [c for c in df.columns if c.lower() == a.lower()]
-            if candidates:
-                return candidates[0]
-        return None
 
     r_col = find_col(recency_col, alias_map[recency_col])
     f_col = find_col(frequency_col, alias_map[frequency_col])
@@ -261,7 +337,7 @@ def churn_risk_score(data_json: str, recency_col: str = "Recency",
     m_norm = 1 - norm(m)  # Monetary 越低越差
 
     score = (r_norm * 0.4 + f_norm * 0.3 + m_norm * 0.3) * 100
-    df["churn_risk_score"] = score.round(1)
+    avg_score = round(float(score.mean()), 1)
 
     def label(s):
         if s >= 70:
@@ -271,14 +347,19 @@ def churn_risk_score(data_json: str, recency_col: str = "Recency",
         else:
             return "低风险"
 
-    df["churn_risk_label"] = df["churn_risk_score"].apply(label)
-    distribution = df["churn_risk_label"].value_counts().to_dict()
+    labels = score.apply(label)
+    distribution = labels.value_counts().to_dict()
+    # 确保三个等级都有
+    for level in ["高风险", "中风险", "低风险"]:
+        if level not in distribution:
+            distribution[level] = 0
 
     return {
         "success": True,
-        "risk_col": "churn_risk_score",
-        "risk_label_col": "churn_risk_label",
+        "total_modeled": total_rows,
+        "avg_score": avg_score,
         "distribution": distribution,
-        "data": df.head(20).fillna("").to_dict(orient="records"),
-        "total": len(df),
+        "score_range": {"min": round(float(score.min()), 1), "max": round(float(score.max()), 1)},
+        "data_source": _build_data_source_info(sql_query, table_name, data_json),
+        "note": f"成功对全量 {total_rows} 行数据完成流失风险建模，返回聚合摘要（非明细数据）",
     }

@@ -253,6 +253,55 @@ def load_result() -> pd.DataFrame:
     return pd.read_csv(FINAL_PATH, encoding="utf-8-sig")
 
 
+# 省份名称规范化（兼容简称、全称及少数民族自治区）
+_PROVINCE_NAME_MAP = {
+    '北京': '北京市', '北京市': '北京市',
+    '天津': '天津市', '天津市': '天津市',
+    '上海': '上海市', '上海市': '上海市',
+    '重庆': '重庆市', '重庆市': '重庆市',
+    '河北': '河北省', '河北省': '河北省',
+    '山西': '山西省', '山西省': '山西省',
+    '辽宁': '辽宁省', '辽宁省': '辽宁省',
+    '吉林': '吉林省', '吉林省': '吉林省',
+    '黑龙江': '黑龙江省', '黑龙江省': '黑龙江省',
+    '江苏': '江苏省', '江苏省': '江苏省',
+    '浙江': '浙江省', '浙江省': '浙江省',
+    '安徽': '安徽省', '安徽省': '安徽省',
+    '福建': '福建省', '福建省': '福建省',
+    '江西': '江西省', '江西省': '江西省',
+    '山东': '山东省', '山东省': '山东省',
+    '河南': '河南省', '河南省': '河南省',
+    '湖北': '湖北省', '湖北省': '湖北省',
+    '湖南': '湖南省', '湖南省': '湖南省',
+    '广东': '广东省', '广东省': '广东省',
+    '海南': '海南省', '海南省': '海南省',
+    '四川': '四川省', '四川省': '四川省',
+    '贵州': '贵州省', '贵州省': '贵州省',
+    '云南': '云南省', '云南省': '云南省',
+    '陕西': '陕西省', '陕西省': '陕西省',
+    '甘肃': '甘肃省', '甘肃省': '甘肃省',
+    '青海': '青海省', '青海省': '青海省',
+    '台湾': '台湾省', '台湾省': '台湾省',
+    '内蒙古': '内蒙古自治区', '内蒙古自治区': '内蒙古自治区',
+    '广西': '广西壮族自治区', '广西壮族自治区': '广西壮族自治区',
+    '西藏': '西藏自治区', '西藏自治区': '西藏自治区',
+    '宁夏': '宁夏回族自治区', '宁夏回族自治区': '宁夏回族自治区',
+    '新疆': '新疆维吾尔自治区', '新疆维吾尔自治区': '新疆维吾尔自治区',
+    '香港': '香港特别行政区', '香港特别行政区': '香港特别行政区',
+    '澳门': '澳门特别行政区', '澳门特别行政区': '澳门特别行政区',
+}
+
+
+def _normalize_province(name: str) -> str:
+    """将省份简称/不规范名称统一为 GeoJSON 标准全称；非标准名称返回 None。"""
+    if not isinstance(name, str):
+        return None
+    name = name.strip()
+    if name in ('', '未知', 'NA', 'N/A', 'NULL', 'None'):
+        return None
+    return _PROVINCE_NAME_MAP.get(name)
+
+
 def _clean_query_cache():
     now = time.time()
     stale = [k for k, v in _QUERY_CACHE.items() if now - v["_time"] > _QUERY_CACHE_TTL]
@@ -298,6 +347,147 @@ def api_mcp_health():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# ==================== 地理分布 API ====================
+
+@app.route("/api/map/province", methods=["GET"])
+def api_map_province():
+    """按省份聚合客户指标，返回给 ECharts 地图使用。"""
+    if not has_data():
+        return jsonify({"success": False, "error": "暂无数据，请先上传或生成分析结果"}), 400
+
+    try:
+        df = load_result()
+        province_col = None
+        for col in ("WORK_PROVINCE", "PROVINCE", "work_province", "province"):
+            if col in df.columns:
+                province_col = col
+                break
+
+        if province_col is None:
+            return jsonify({"success": False, "error": "缺少省份字段（WORK_PROVINCE/PROVINCE）"}), 400
+
+        df = df.copy()
+        df["_province_norm"] = df[province_col].apply(_normalize_province)
+        df = df[df["_province_norm"].notna()]
+
+        # 可选聚合指标
+        agg = {"MEMBER_NO": "count"}
+        rename = {"MEMBER_NO": "count", "_province_norm": "name"}
+
+        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+        if "SEG_KM_SUM" in numeric_cols:
+            agg["SEG_KM_SUM"] = "sum"
+            rename["SEG_KM_SUM"] = "total_km"
+        if "avg_discount" in numeric_cols:
+            agg["avg_discount"] = "mean"
+            rename["avg_discount"] = "avg_discount"
+        if "FLIGHT_COUNT" in numeric_cols:
+            agg["FLIGHT_COUNT"] = "sum"
+            rename["FLIGHT_COUNT"] = "total_flights"
+        if "BP_SUM" in numeric_cols:
+            agg["BP_SUM"] = "sum"
+            rename["BP_SUM"] = "total_bp"
+
+        stats = df.groupby("_province_norm").agg(agg).reset_index()
+        stats = stats.rename(columns=rename)
+
+        # 浮点精度处理
+        for col in stats.columns:
+            if col != "name":
+                stats[col] = stats[col].round(2)
+
+        return jsonify({"success": True, "data": stats.to_dict(orient="records")})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/map/province/customers", methods=["GET"])
+def api_map_province_customers():
+    """返回指定省份的客户明细，支持分页与按指标排序，同时返回未知/无效省份统计。"""
+    if not has_data():
+        return jsonify({"success": False, "error": "暂无数据"}), 400
+
+    province = request.args.get("province", "").strip()
+    metric = request.args.get("metric", "count")
+    sort = request.args.get("sort", "desc")
+    page = request.args.get("page", "1", type=int)
+    page_size = request.args.get("page_size", "20", type=int)
+
+    if not province:
+        return jsonify({"success": False, "error": "缺少 province 参数"}), 400
+
+    # 限制分页大小，防止内存/带宽问题
+    page = max(1, page)
+    page_size = min(max(1, page_size), 100)
+
+    metric_to_column = {
+        "count": "MEMBER_NO",
+        "total_km": "SEG_KM_SUM",
+        "total_flights": "FLIGHT_COUNT",
+        "total_bp": "BP_SUM",
+        "avg_discount": "avg_discount",
+    }
+    sort_col = metric_to_column.get(metric, "MEMBER_NO")
+    ascending = sort.lower() == "asc"
+
+    try:
+        df = load_result()
+        province_col = None
+        for col in ("WORK_PROVINCE", "PROVINCE", "work_province", "province"):
+            if col in df.columns:
+                province_col = col
+                break
+        if province_col is None:
+            return jsonify({"success": False, "error": "缺少省份字段"}), 400
+
+        df = df.copy()
+        df["_province_norm"] = df[province_col].apply(_normalize_province)
+
+        # 未知/无效省份统计
+        unknown_count = int(df["_province_norm"].isna().sum())
+
+        # 筛选目标省份（已规范化的全称）
+        mask = df["_province_norm"] == province
+        filtered = df[mask].copy()
+
+        # 排序
+        if sort_col in filtered.columns:
+            filtered = filtered.sort_values(by=sort_col, ascending=ascending)
+
+        total = len(filtered)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_df = filtered.iloc[start:end]
+
+        # 选择返回字段
+        output_cols = [
+            "MEMBER_NO", "AGE", "GENDER", "FFP_TIER",
+            "WORK_CITY", "WORK_PROVINCE",
+            "FLIGHT_COUNT", "SEG_KM_SUM", "BP_SUM", "avg_discount",
+            "Recency", "Frequency", "Monetary", "value_label"
+        ]
+        available_cols = [c for c in output_cols if c in page_df.columns]
+        records = page_df[available_cols].fillna("-").to_dict(orient="records")
+
+        return jsonify({
+            "success": True,
+            "province": province,
+            "metric": metric,
+            "sort": sort,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+            "unknown_count": unknown_count,
+            "data": records,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ==================== 配置读写 API ====================
 
 @app.route("/api/config", methods=["GET"])
@@ -340,9 +530,20 @@ def api_save_config():
     if "openai_model" in data:
         config.OPENAI_MODEL = data["openai_model"]
         updates["openai_model"] = data["openai_model"]
-    if "openai_key" in data and data["openai_key"] and not data["openai_key"].startswith("sk-****"):
-        config.OPENAI_API_KEY = data["openai_key"]
-        updates["openai_key"] = data["openai_key"]
+    # 修改：允许清空 API key
+    if "openai_key" in data:
+        new_key = data["openai_key"]
+        # 如果是掩码值，不更新
+        if new_key.startswith("sk-****"):
+            pass
+        # 如果是空值，清除旧的 key
+        elif not new_key or new_key.strip() == "":
+            config.OPENAI_API_KEY = ""
+            updates["openai_key"] = ""
+        # 如果是新的有效 key，更新
+        else:
+            config.OPENAI_API_KEY = new_key
+            updates["openai_key"] = new_key
     if "mcp_server_url" in data:
         config.MCP_SERVER_URL = data["mcp_server_url"]
         updates["mcp_server_url"] = data["mcp_server_url"]
@@ -489,25 +690,6 @@ def api_sql_execute():
             result["total_rows"] = result["row_count"]
             result["row_count"] = sample_size
 
-    return jsonify(result)
-
-
-# ==================== 图表生成端点 ====================
-
-@app.route("/api/chart/generate", methods=["POST"])
-def api_chart_generate():
-    _init_tool_registry()
-    data_json = request.json.get("data", "[]")
-    chart_type = request.json.get("chart_type", "auto")
-    title = request.json.get("title", "")
-    purpose = request.json.get("purpose", "")
-
-    if isinstance(data_json, list):
-        data_json = json.dumps(data_json)
-
-    result = TOOL_REGISTRY["generate_visualization"]["function"](
-        data_json, chart_type=chart_type, title=title, purpose=purpose
-    )
     return jsonify(result)
 
 
@@ -1535,6 +1717,9 @@ def api_chat():
     if not question:
         return jsonify({"error": "请输入问题"}), 400
 
+    # 获取历史对话上下文（用于理解"上文"、"上面"等指代）
+    history = request.json.get("history", [])
+
     mode = request.json.get("mode", "auto")
 
     # 手动模式：前端指定工具调用链
@@ -1546,7 +1731,7 @@ def api_chat():
         from agent import run_agent, is_mcp_available
         if is_mcp_available():
             print("[/api/chat] 使用 MCP Agent 模式")
-            agent_result = run_agent(question)
+            agent_result = run_agent(question, history=history)
             if agent_result.get("mode") != "error":
                 # Agent 成功，处理分页逻辑
                 return _process_agent_result(agent_result, request.json)
@@ -1557,7 +1742,7 @@ def api_chat():
 
     # 降级到后端编排
     print("[/api/chat] 降级到后端编排模式")
-    return _fallback_orchestration(question, request.json)
+    return _fallback_orchestration(question, request.json, history)
 
 
 def _process_agent_result(agent_result: dict, request_data: dict) -> dict:
@@ -1619,8 +1804,8 @@ def _process_agent_result(agent_result: dict, request_data: dict) -> dict:
     return jsonify(result)
 
 
-def _fallback_orchestration(question: str, request_data: dict) -> dict:
-    """降级到后端编排模式"""
+def _fallback_orchestration(question: str, request_data: dict, history: list = None) -> dict:
+    """降级到后端编排模式（接收 history 以保持对话连贯性）"""
     intent = _detect_intent(question)
 
     if intent == "help":
@@ -1680,6 +1865,27 @@ def api_chat_page():
         "total_rows": total,
         "total_pages": total_pages,
     })
+
+
+@app.route("/api/chart/generate", methods=["POST"])
+def api_chart_generate():
+    """动态生成图表（用于图表类型切换）"""
+    data = request.json or {}
+    data_json = data.get("data_json")
+    chart_type = data.get("chart_type", "auto")
+    title = data.get("title", "")
+    purpose = data.get("purpose", "")
+
+    if not data_json:
+        return jsonify({"error": "缺少 data_json"}), 400
+
+    try:
+        # 直接调用 chart_tools
+        from mcp_tools.chart_tools import generate_visualization
+        result = generate_visualization(data_json, chart_type, title, purpose)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e), "success": False}), 500
 
 
 def _handle_manual_chat(payload: dict):
