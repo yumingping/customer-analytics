@@ -995,6 +995,9 @@ def _build_sql_system_prompt(question: str = "") -> str:
   - avg_discount  平均折扣率（小数，如 0.85）
   - ffp_date      入会日期
   - first_flight  首次飞行日期
+  - work_province 工作省份（如 广东省、北京市）
+  - work_city     工作城市
+  - work_country  工作国家
 
 ■ 表2: customer_flight_summary（飞行行为汇总）
   - member_no     会员编号（主键）
@@ -1019,7 +1022,6 @@ def _build_sql_system_prompt(question: str = "") -> str:
 ═══════════════════════════════════════════
 【绝对禁止 — 以下列名不存在，用了必报错】
 ═══════════════════════════════════════════
-  ✗ city / 工作地点 / 城市 / 地区 / province / 省份 — 数据库中没有地理位置字段！
   ✗ name / 姓名 / phone / 电话 / email — 没有个人信息字段！
   ✗ work_location / company / 职位 — 没有职业信息！
   ✗ order_count / revenue / amount — 没有订单/金额字段！
@@ -1388,7 +1390,7 @@ def _orchestrate_forecast(question: str) -> dict:
 
     # 调用预测工具
     forecast_result = TOOL_REGISTRY["forecast_trend"]["function"](
-        json.dumps(sql_data, ensure_ascii=False), periods=3
+        data_json=json.dumps(sql_data, ensure_ascii=False), periods=3
     )
 
     sql_result["steps"].append({
@@ -1423,7 +1425,7 @@ def _orchestrate_anomaly(question: str) -> dict:
         return sql_result
 
     anomaly_result = TOOL_REGISTRY["detect_anomalies"]["function"](
-        json.dumps(sql_data, ensure_ascii=False)
+        data_json=json.dumps(sql_data, ensure_ascii=False)
     )
 
     sql_result["steps"].append({
@@ -1464,7 +1466,7 @@ def _orchestrate_churn(question: str) -> dict:
     sample_df = df[rfm_cols].head(500)
     data_json = sample_df.to_json(orient="records", force_ascii=False)
 
-    churn_result = TOOL_REGISTRY["churn_risk_score"]["function"](data_json)
+    churn_result = TOOL_REGISTRY["churn_risk_score"]["function"](data_json=data_json)
 
     steps = [{
         "tool": "churn_risk_score",

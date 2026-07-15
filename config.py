@@ -9,7 +9,7 @@ from pathlib import Path
 
 # ==================== 项目路径 ====================
 BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR.parent / "项目5_客户分析与智能查询"
+DATA_DIR = BASE_DIR.parent / "项目5_客户分析与智能查询" 
 OUTPUT_DIR = BASE_DIR / "output"
 SQLITE_PATH = str(OUTPUT_DIR / "sandbox.db")
 
@@ -51,17 +51,17 @@ MCP_SERVER_URL = "http://127.0.0.1:5001"
 
 # ==================== LLM 提供商配置 ====================
 # provider: "ollama" | "openai_compatible" | "none"
-LLM_PROVIDER = "openai_compatible"  # 👈 第一处修改：启用 OpenAI 兼容模式
+LLM_PROVIDER = "openai_compatible"  
 
-# Ollama (保持不变即可，因为上面已经改成了 openai_compatible)
+# Ollama
 OLLAMA_URL = "http://localhost:55555"
 OLLAMA_MODEL = "gemma3:4b"
 OLLAMA_OPTIONS = {"temperature": 0.1}
 
 # OpenAI 兼容 API（以 DeepSeek 为例）
-OPENAI_API_URL = ""   # 填入云端 API 地址，如 https://api.deepseek.com/v1/chat/completions
+OPENAI_API_URL = "https://api.deepseek.com/v1/chat/completions"   # 填入云端 API 地址，如 https://api.deepseek.com/v1/chat/completions
 OPENAI_API_KEY = ""   # 填入 API KEY（建议通过 config.json 或环境变量配置）
-OPENAI_MODEL = ""     # 填入模型名称，如 deepseek-v4-flash
+OPENAI_MODEL = "deepseek-v4-pro"     # 填入模型名称，如 deepseek-v4-flash
 
 # ==================== 聚类参数 ====================
 CLUSTER_RANGE = range(2, 9)   # K 值搜索范围
@@ -110,15 +110,20 @@ def save_runtime_config(updates: dict):
 _RUNTIME_CONFIG = _load_runtime_config()
 
 # 用持久化配置覆盖默认值（如果存在）
-LLM_PROVIDER = _RUNTIME_CONFIG.get("llm_provider", LLM_PROVIDER)
-OLLAMA_URL = _RUNTIME_CONFIG.get("ollama_url", OLLAMA_URL)
-OLLAMA_MODEL = _RUNTIME_CONFIG.get("ollama_model", OLLAMA_MODEL)
-OPENAI_API_URL = _RUNTIME_CONFIG.get("openai_url", OPENAI_API_URL)
-OPENAI_MODEL = _RUNTIME_CONFIG.get("openai_model", OPENAI_MODEL)
-OPENAI_API_KEY = _RUNTIME_CONFIG.get("openai_key", OPENAI_API_KEY)
-MCP_SERVER_URL = _RUNTIME_CONFIG.get("mcp_server_url", MCP_SERVER_URL)
-N_CLUSTERS = _RUNTIME_CONFIG.get("n_clusters", N_CLUSTERS)
-CLUSTER_RANDOM_STATE = _RUNTIME_CONFIG.get("cluster_random_state", CLUSTER_RANDOM_STATE)
+# 注意：空字符串不算有效覆盖值，避免 config.json 中 "" 误覆盖 config.py 中的非空默认值
+def _override(key: str, default):
+    val = _RUNTIME_CONFIG.get(key)
+    return default if val is None or val == "" else val
+
+LLM_PROVIDER = _override("llm_provider", LLM_PROVIDER)
+OLLAMA_URL = _override("ollama_url", OLLAMA_URL)
+OLLAMA_MODEL = _override("ollama_model", OLLAMA_MODEL)
+OPENAI_API_URL = _override("openai_url", OPENAI_API_URL)
+OPENAI_MODEL = _override("openai_model", OPENAI_MODEL)
+OPENAI_API_KEY = _override("openai_key", OPENAI_API_KEY)
+MCP_SERVER_URL = _override("mcp_server_url", MCP_SERVER_URL)
+N_CLUSTERS = _override("n_clusters", N_CLUSTERS)
+CLUSTER_RANDOM_STATE = _override("cluster_random_state", CLUSTER_RANDOM_STATE)
 
 
 # ==================== 沙箱安全 ====================
