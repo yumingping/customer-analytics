@@ -325,12 +325,38 @@ _BASE_COL_MAP = {
     "MEMBER_NO": "member_no", "AGE": "age", "GENDER": "gender",
     "FFP_TIER": "ffp_tier", "avg_discount": "avg_discount",
     "FFP_DATE": "ffp_date", "FIRST_FLIGHT_DATE": "first_flight",
+    "WORK_PROVINCE": "work_province", "WORK_CITY": "work_city",
+    "WORK_COUNTRY": "work_country",
+    "LOAD_TIME": "load_time", "membership_years": "membership_years",
 }
 
 _FLIGHT_COL_MAP = {
     "MEMBER_NO": "member_no", "FLIGHT_COUNT": "flight_count",
     "SEG_KM_SUM": "seg_km_sum", "BP_SUM": "bp_sum",
     "LAST_FLIGHT_DATE": "last_flight", "Recency": "recency",
+    "Frequency": "frequency", "Monetary": "monetary",
+    # 积分相关
+    "Points_Sum": "points_sum", "Point_NotFlight": "point_not_flight",
+    "EP_SUM": "ep_sum", "EP_SUM_YR_1": "ep_sum_yr_1", "EP_SUM_YR_2": "ep_sum_yr_2",
+    "ADD_Point_SUM": "add_point_sum", "ADD_POINTS_SUM_YR_1": "add_points_sum_yr_1",
+    "ADD_POINTS_SUM_YR_2": "add_points_sum_yr_2", "Eli_Add_Point_Sum": "eli_add_point_sum",
+    # 年度飞行数据
+    "L1Y_Flight_Count": "l1y_flight_count", "L1Y_BP_SUM": "l1y_bp_sum",
+    "L1Y_Points_Sum": "l1y_points_sum", "L1Y_ELi_Add_Points": "l1y_eli_add_points",
+    "P1Y_Flight_Count": "p1y_flight_count", "P1Y_BP_SUM": "p1y_bp_sum",
+    # 比率
+    "Ration_L1Y_Flight_Count": "ration_l1y_flight_count",
+    "Ration_P1Y_Flight_Count": "ration_p1y_flight_count",
+    "Ration_L1Y_BPS": "ration_l1y_bps", "Ration_P1Y_BPS": "ration_p1y_bps",
+    # 年度汇总 & 均值
+    "SUM_YR_1": "sum_yr_1", "SUM_YR_2": "sum_yr_2",
+    "WEIGHTED_SEG_KM": "weighted_seg_km",
+    "AVG_FLIGHT_COUNT": "avg_flight_count", "AVG_BP_SUM": "avg_bp_sum",
+    # 间隔
+    "BEGIN_TO_FIRST": "begin_to_first", "LAST_TO_END": "last_to_end",
+    "AVG_INTERVAL": "avg_interval", "MAX_INTERVAL": "max_interval",
+    # 兑换
+    "EXCHANGE_COUNT": "exchange_count",
 }
 
 _ANALYTICS_COL_MAP = {
@@ -340,14 +366,10 @@ _ANALYTICS_COL_MAP = {
     "value_label": "value_label",
 }
 
-_WIDE_COL_MAP = {
-    "MEMBER_NO": "member_no", "AGE": "age", "GENDER": "gender",
-    "FFP_TIER": "ffp_tier", "Recency": "recency",
-    "Frequency": "frequency", "Monetary": "monetary",
-    "R_score": "r_score", "F_score": "f_score", "M_score": "m_score",
-    "RFM_total": "rfm_total", "cluster": "cluster",
-    "avg_discount": "avg_discount", "value_label": "value_label",
-}
+_WIDE_COL_MAP = {}
+_WIDE_COL_MAP.update(_BASE_COL_MAP)
+_WIDE_COL_MAP.update(_FLIGHT_COL_MAP)
+_WIDE_COL_MAP.update(_ANALYTICS_COL_MAP)
 
 
 def _map_columns(df: pd.DataFrame, col_map: dict) -> pd.DataFrame:
@@ -374,25 +396,25 @@ def _write_dataframe_to_sandbox(engine, df: pd.DataFrame):
     # 1. customer_base
     base_df = _map_columns(df, _BASE_COL_MAP)
     if not base_df.empty:
-        base_df.to_sql("customer_base", engine, if_exists="replace", index=False, chunksize=5000)
+        base_df.to_sql("customer_base", engine, if_exists="replace", index=False)
         print(f"  [沙箱] customer_base: {len(base_df)} 条")
 
     # 2. customer_flight_summary
     flight_df = _map_columns(df, _FLIGHT_COL_MAP)
     if not flight_df.empty:
-        flight_df.to_sql("customer_flight_summary", engine, if_exists="replace", index=False, chunksize=5000)
+        flight_df.to_sql("customer_flight_summary", engine, if_exists="replace", index=False)
         print(f"  [沙箱] customer_flight_summary: {len(flight_df)} 条")
 
     # 3. customer_analytics
     analytics_df = _map_columns(df, _ANALYTICS_COL_MAP)
     if not analytics_df.empty:
-        analytics_df.to_sql("customer_analytics", engine, if_exists="replace", index=False, chunksize=5000)
+        analytics_df.to_sql("customer_analytics", engine, if_exists="replace", index=False)
         print(f"  [沙箱] customer_analytics: {len(analytics_df)} 条")
 
     # 4. customer_rfm 宽表（兼容旧查询）
     wide_df = _map_columns(df, _WIDE_COL_MAP)
     if not wide_df.empty:
-        wide_df.to_sql("customer_rfm", engine, if_exists="replace", index=False, chunksize=5000)
+        wide_df.to_sql("customer_rfm", engine, if_exists="replace", index=False)
         print(f"  [沙箱] customer_rfm (宽表): {len(wide_df)} 条")
 
 

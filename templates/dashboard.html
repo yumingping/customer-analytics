@@ -684,25 +684,7 @@ body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
                     <!-- Chart Controls -->
                     <div class="flex items-center justify-between px-4 py-2.5 bg-stone-50 border-b border-stone-200">
                       <div class="flex items-center gap-2">
-                        <span class="text-xs text-stone-500 font-medium">图表类型</span>
-                        <select @change="changeChartType(idx, $event.target.value)" 
-                                class="text-xs border border-stone-300 rounded-md px-2.5 py-1.5 bg-white hover:border-stone-400 focus:outline-none focus:border-stone-500 transition-colors">
-                          <option value="auto">自动</option>
-                          <option value="bar">柱状图</option>
-                          <option value="line">折线图</option>
-                          <option value="pie">饼图</option>
-                          <option value="scatter">散点图</option>
-                          <option value="radar">雷达图</option>
-                          <option value="treemap">矩形树图</option>
-                        </select>
-                      </div>
-                      <div class="flex items-center gap-2">
-                        <button @click="resetZoom(idx)" 
-                                class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-stone-600 bg-white border border-stone-300 rounded-md hover:bg-stone-50 hover:border-stone-400 transition-colors">
-                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                          重置缩放
-                        </button>
-                        <button @click="exportChart(idx)" 
+<button @click="exportChart(idx)" 
                                 class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-stone-600 bg-white border border-stone-300 rounded-md hover:bg-stone-50 hover:border-stone-400 transition-colors">
                           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                           导出图片
@@ -1303,58 +1285,7 @@ document.addEventListener('alpine:init',()=>{
     },
     scrollToBottom(){this.$nextTick(()=>{const c=document.getElementById('chatContainer');if(c)c.scrollTo({top:c.scrollHeight,behavior:'smooth'});});},
     
-    // ── Chart Interaction Methods ──
-    changeChartType(msgIdx, newType) {
-      const msg = this.messages[msgIdx];
-      if (!msg || !msg.hasChart) return;
-      
-      // 获取原始数据
-      const chartStep = msg.steps.find(s => s.tool === 'generate_visualization' && s.success);
-      if (!chartStep || !chartStep.result || !chartStep.result.data_json) {
-        this.showToast('无法获取原始数据', 'error');
-        return;
-      }
-      
-      // 调用后端生成新图表
-      fetch('/api/chart/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          data_json: chartStep.result.data_json,
-          chart_type: newType,
-          title: chartStep.result.title || ''
-        })
-      })
-      .then(r => r.json())
-      .then(res => {
-        if (res.success && res.echarts_option) {
-          const el = document.getElementById('chat-chart-' + msgIdx);
-          if (el) {
-            const existing = echarts.getInstanceByDom(el);
-            if (existing) {
-              existing.setOption(res.echarts_option, true);
-              setTimeout(() => existing.resize(), 50);
-            }
-          }
-          this.showToast('图表类型已切换', 'success');
-        } else {
-          this.showToast('切换失败: ' + (res.error || '未知错误'), 'error');
-        }
-      })
-      .catch(e => this.showToast('网络错误', 'error'));
-    },
-    
-    resetZoom(msgIdx) {
-      const el = document.getElementById('chat-chart-' + msgIdx);
-      if (!el) return;
-      const chart = echarts.getInstanceByDom(el);
-      if (chart) {
-        chart.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
-        this.showToast('缩放已重置', 'success');
-      }
-    },
-    
-    exportChart(msgIdx) {
+exportChart(msgIdx) {
       const el = document.getElementById('chat-chart-' + msgIdx);
       if (!el) return;
       const chart = echarts.getInstanceByDom(el);

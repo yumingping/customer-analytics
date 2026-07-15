@@ -222,11 +222,16 @@ def generate_visualization(data_json: str, chart_type: str = "auto",
             "chart_type": chart_type,
         }
 
+    # 确保 data_json 被保留，供前端切换图表类型时使用
+    raw_json = data_json if isinstance(data_json, str) else json.dumps(data, ensure_ascii=False)
+
     return {
         "success": True,
         "chart_type": chart_type,
         "echarts_option": echarts_option,
         "recommendation": recommendation.get("reason", ""),
+        "data_json": raw_json,
+        "title": title,
     }
 
 
@@ -332,14 +337,15 @@ def _build_line_option(df: pd.DataFrame, col_types: dict, title: str) -> dict:
 
 
 def _build_scatter_option(df: pd.DataFrame, col_types: dict, title: str) -> dict:
-    """散点图"""
+    """散点图：至少需要两个数值列，否则降级为柱状图"""
     numeric_cols = [c for c, t in col_types.items() if t == "numeric"]
     cat_cols = [c for c, t in col_types.items() if t == "categorical"]
 
-    if len(numeric_cols) >= 2:
-        x_col, y_col = numeric_cols[0], numeric_cols[1]
-    else:
-        x_col, y_col = df.columns[0], df.columns[-1]
+    # 散点图要求 X、Y 轴都是数值，不足 2 个数值列时降级
+    if len(numeric_cols) < 2:
+        return _build_bar_option(df, col_types, title)
+
+    x_col, y_col = numeric_cols[0], numeric_cols[1]
 
     # 按分类分组着色
     if cat_cols:
